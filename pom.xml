@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.github.maxsumrall.jev4j</groupId>
+  <artifactId>jev4j-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <modules><module>jev4j-core</module></modules>
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <junit.version>5.11.4</junit.version>
+  </properties>
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version>
+          <configuration>
+            <annotationProcessorPaths>
+              <path><groupId>com.google.errorprone</groupId><artifactId>error_prone_core</artifactId><version>2.36.0</version></path>
+              <path><groupId>com.uber.nullaway</groupId><artifactId>nullaway</artifactId><version>0.12.4</version></path>
+              <path><groupId>tech.picnic.error-prone-support</groupId><artifactId>error-prone-contrib</artifactId><version>0.22.0</version></path>
+            </annotationProcessorPaths>
+            <compilerArgs>
+              <arg>-XDcompilePolicy=simple</arg><arg>--should-stop=ifError=FLOW</arg><arg>-Werror</arg><arg>-Xplugin:ErrorProne -Xep:NullAway:ERROR -XepOpt:NullAway:AnnotatedPackages=io.github.maxsumrall.jev4j</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+        <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version><configuration><useModulePath>false</useModulePath></configuration></plugin>
+        <plugin><groupId>com.spotify.fmt</groupId><artifactId>fmt-maven-plugin</artifactId><version>2.25</version><executions><execution><goals><goal>check</goal></goals></execution></executions></plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>
