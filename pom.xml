@@ -6,11 +6,15 @@
   <artifactId>jev4j-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <modules><module>jev4j-core</module></modules>
+  <modules>
+    <module>jev4j-core</module>
+    <module>jev4j-spring-boot-starter</module>
+  </modules>
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.11.4</junit.version>
+    <spring-boot.version>4.0.8</spring-boot.version>
   </properties>
   <build>
     <pluginManagement>
