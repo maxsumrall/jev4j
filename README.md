@@ -6,15 +6,19 @@ Evaluate text as a yes/no probability, an enum choice, or a score against ordere
 [![CI](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml)
 [![OpenRouter component tests](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml)
 
+<!-- java: members -->
 ```java
 import io.github.maxsumrall.jev4j.Jev;
 import io.github.maxsumrall.jev4j.Jev.NoulQuestion;
+import io.github.maxsumrall.jev4j.JevEvaluator;
 
-NoulQuestion isUrgent = Jev.noul("Is this urgent?");
-if (jev.test(request, isUrgent)) {
-  return "priority-support";
-} else {
-  return "normal-support";
+String supportQueue(JevEvaluator jev, String request) {
+  NoulQuestion isUrgent = Jev.noul("Is this urgent?");
+  if (jev.test(request, isUrgent)) {
+    return "priority-support";
+  } else {
+    return "normal-support";
+  }
 }
 ```
 
@@ -52,6 +56,7 @@ Then add the core library to your application:
 
 Create an evaluator using your OpenRouter key from the environment:
 
+<!-- java: body -->
 ```java
 import io.github.maxsumrall.jev4j.Jev;
 import io.github.maxsumrall.jev4j.Jev.NoulAnswer;
@@ -78,14 +83,17 @@ if (jev.test("Please call me.", Jev.noul("Does this need a human response?"))) {
 }
 ```
 
-The following snippets reuse these imports and evaluator. Each `evaluate(...)` call makes one
-provider request and may incur charges. To call TypeSafe instead, use a TypeSafe key and
-`.typeSafe()` (the default provider).
+The Java snippets below form one scenario: reuse the imports and earlier local variables in an
+application method; put enums, records, and routing methods in the surrounding application class.
+They are fragments, not separate programs. Each `evaluate(...)` call makes one provider request
+and may incur charges. To call TypeSafe instead, use a TypeSafe key and `.typeSafe()` (the default
+provider).
 
 ## Noul: a probability of yes
 
 Jev calls its yes/no primitive **Noul**. A value near 1 means yes; near 0 means no.
 
+<!-- java: body -->
 ```java
 answer.isTrue();        // probability >= the question's threshold, 0.8
 answer.isTrueAt(0.95);  // an override for this check only
@@ -95,8 +103,10 @@ Neither check makes another request or mutates the answer. Noul uses an inclusiv
 by default. `jev.test(...)` evaluates once and applies the configured threshold; it makes one
 provider request and may incur charges.
 
-A probability below the yes threshold may still be uncertain. Reserve a range for review:
+A `false` result means the probability fell below the yes threshold, not that the model gave a
+confident no. Reserve a range for review:
 
+<!-- java: body -->
 ```java
 double p = answer.probabilityTrue();
 String decision = p >= 0.9 ? "YES" : p <= 0.1 ? "NO" : "REVIEW";
@@ -107,6 +117,7 @@ String decision = p >= 0.9 ? "YES" : p <= 0.1 ? "NO" : "REVIEW";
 Define the allowed options with an enum. Implement `Jev.Described` to keep descriptions with
 the constants:
 
+<!-- java: members -->
 ```java
 import io.github.maxsumrall.jev4j.Jev.ChoiceAnswer;
 import io.github.maxsumrall.jev4j.Jev.ChoiceQuestion;
@@ -127,7 +138,10 @@ enum Department implements Jev.Described {
     return description;
   }
 }
+```
 
+<!-- java: body -->
+```java
 ChoiceQuestion<Department> department =
     Jev.choice(Department.class, "Which team should handle this message?")
     .minConfidence(0.85);
@@ -138,6 +152,7 @@ ChoiceAnswer<Department> classification =
 
 Add this routing method to your application class:
 
+<!-- java: members -->
 ```java
 String queue(ChoiceAnswer<Department> answer) {
   if (!answer.meetsThresholds()) {
@@ -154,8 +169,9 @@ String queue(ChoiceAnswer<Department> answer) {
 `value()` retains the selected enum even when it fails acceptance checks. `probabilities()`
 returns an immutable map keyed by the enum; `confidence()` retains Jev's reported statistic.
 `classification.is(Department.DELIVERY)` tests whether Delivery is the accepted selection, including all
-configured thresholds. An empty `acceptedValue()` means a local threshold failed, not a provider
-error.
+configured thresholds. An empty `acceptedValue()` means a local threshold failed; you still have
+the provider's answer to inspect. A transport error instead raises `JevEvaluationException` and
+provides no answer to accept or reject.
 
 Choice and Score probability distributions must contain every declared option and total 1 within
 an absolute tolerance of `1e-6`. This allows small floating-point or decimal-rounding differences;
@@ -163,9 +179,13 @@ jev4j rejects totals outside it rather than normalizing or recomputing scores or
 
 For an existing enum, supply descriptions on the question instead:
 
+<!-- java: members -->
 ```java
 enum PlainDepartment { BILLING, DELIVERY, OTHER }
+```
 
+<!-- java: body -->
+```java
 ChoiceQuestion<PlainDepartment> plainDepartment =
     Jev.choice(PlainDepartment.class, "Route it")
         .describe(PlainDepartment.BILLING, "Payments");
@@ -179,6 +199,7 @@ only the description. Wire labels use `Enum.name()`, not `toString()`.
 Implement `Jev.ScoreLevel` to describe each level. Declare constants from lowest to highest;
 their positions define scores starting at zero. Reordering the enum changes the rubric.
 
+<!-- java: members -->
 ```java
 import io.github.maxsumrall.jev4j.Jev.EnumScoreAnswer;
 import io.github.maxsumrall.jev4j.Jev.EnumScoreQuestion;
@@ -199,7 +220,10 @@ enum Frustration implements Jev.ScoreLevel {
     return description;
   }
 }
+```
 
+<!-- java: body -->
+```java
 EnumScoreQuestion<Frustration> frustration =
     Jev.score(Frustration.class, "How frustrated is the customer?")
     .minConfidence(0.85);
@@ -218,13 +242,18 @@ Jev returns a fractional score, such as 1.6. Read it through `value()` or `accep
 midpoints round upward. `nearestLevel()` provides the same rounding without the acceptance guard.
 
 Use `mostLikelyLevel()` for the enum with the highest reported probability. Ties choose the first
-declared level. For example, with score `0.95` and probabilities `CALM: 0.45`, `FRUSTRATED: 0.15`,
-`VERY_ANGRY: 0.40`:
+declared level. This synthetic fixture makes no request and does not reuse the live `rating`:
 
+<!-- java: body -->
 ```java
-double score = rating.value();                       // 0.95
-Frustration nearest = rating.nearestLevel();         // FRUSTRATED
-Frustration mostLikely = rating.mostLikelyLevel();   // CALM
+EnumScoreAnswer<Frustration> syntheticRating = frustration.answer(
+    0.95,
+    java.util.Map.of(Frustration.CALM, 0.45, Frustration.FRUSTRATED, 0.15,
+        Frustration.VERY_ANGRY, 0.40),
+    0.9);
+double score = syntheticRating.value();                      // 0.95
+Frustration nearest = syntheticRating.nearestLevel();        // FRUSTRATED
+Frustration mostLikely = syntheticRating.mostLikelyLevel();  // CALM
 ```
 
 Neither helper applies the confidence threshold. Keep `probabilities()` and `confidence()` when
@@ -233,12 +262,14 @@ uncertainty matters; the most likely level need not have a majority of the proba
 
 Use the optional level when composing with existing application methods:
 
+<!-- java: body -->
 ```java
 java.util.Optional<Frustration> accepted = rating.acceptedLevel();
 ```
 
 For a rubric without an enum:
 
+<!-- java: body -->
 ```java
 import io.github.maxsumrall.jev4j.Jev.ScoreQuestion;
 
@@ -273,6 +304,7 @@ become `false` or an empty accepted result.
 Reuse an evaluator across requests. Configure its model, base URI, or timeout, or supply your
 application's JDK `HttpClient` for proxy and TLS settings:
 
+<!-- java: body -->
 ```java
 import io.github.maxsumrall.jev4j.JevEvaluator.Evaluation;
 
@@ -315,12 +347,16 @@ are neither trimmed nor included in validation errors or their cause chains.
 Evaluation is synchronous and accepts one question or two through eight typed questions with the
 same String state. A multi-question evaluation uses one request and carries one set of metadata:
 
+<!-- java: members -->
 ```java
 record RoutingDecision(NoulAnswer refund, ChoiceAnswer<Department> department) {}
+```
 
-JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>> evaluation =
+<!-- java: body -->
+```java
+JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>> multiEvaluation =
     configured.evaluate("Please refund this order.", refundRequested, department);
-RoutingDecision decision = evaluation.map(RoutingDecision::new);
+RoutingDecision routingDecision = multiEvaluation.map(RoutingDecision::new);
 ```
 
 The result exposes `answer1()` through `answerN()` in question order, plus request-level model,
@@ -372,6 +408,7 @@ After `./mvnw clean install`:
 Each example's README includes run and copy instructions. Use `question.answer(...)` to construct
 local test fixtures without a network call:
 
+<!-- java: body -->
 ```java
 NoulAnswer synthetic = refundRequested.answer(0.84);
 assert synthetic.isTrue();
@@ -397,6 +434,11 @@ the regeneration check.
 server, using structural golden JSON fixtures and compile-time generic contracts. That suite also
 checks credential redaction and transport failures. Focused core tests retain numeric boundaries,
 defensive-copy behavior, and construction invariants.
+`ReadmeCompileTest` compiles every Java fence in this README against the installed core JAR with
+Java 17 language rules. Hidden `java: members` and `java: body` markers identify class declarations
+and shared method fragments; the check collects their imports without adding library calls or
+fixtures. New Java fences need a marker. This offline check catches API and type drift but does
+not execute the snippets, check output comments, or validate XML, properties, or shell commands.
 The Spring example tests real random-port HTTP endpoints in offline and local-provider modes.
 Small Spring context tests cover bean replacement and missing credentials without inspecting
 private fields. Compatibility jobs compile the consumer and Spring application suites on Java 17,
