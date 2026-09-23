@@ -16,11 +16,8 @@ final class PublicTypeContractTest {
   @TempDir Path output;
 
   @Test
-  void compilerEnforcesPlainNoulAndEnumTypeContracts() throws Exception {
+  void compilerEnforcesNoulAndEnumTypeContracts() throws Exception {
     assertTrue(
-        compiles(
-            "import io.github.maxsumrall.jev4j.Jev; class T { boolean f() { return Jev.noul(\"x\").answer(.5).isTrueAt(.5); } }"));
-    assertFalse(
         compiles(
             "import io.github.maxsumrall.jev4j.Jev; class T { boolean f() { return Jev.noul(\"x\").answer(.5).isTrue(); } }"));
     assertFalse(
@@ -29,6 +26,12 @@ final class PublicTypeContractTest {
     assertTrue(
         compiles(
             "import io.github.maxsumrall.jev4j.Jev; import java.util.Map; class T { enum A { X } void f() { Jev.choice(A.class, \"x\").answer(A.X, Map.of(A.X, 1.0), 1); } }"));
+    assertTrue(
+        compiles(
+            "import io.github.maxsumrall.jev4j.*; class T { void f(JevEvaluator e) { e.evaluate(\"state\", Jev.noul(\"question\")); e.evaluateWithMetadata(\"state\", Jev.noul(\"question\")); } }"));
+    assertFalse(
+        compiles(
+            "import io.github.maxsumrall.jev4j.*; class T { void f(JevEvaluator e) { e.evaluate(Jev.noul(\"question\"), \"state\"); } }"));
   }
 
   private boolean compiles(String source) {

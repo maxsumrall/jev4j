@@ -47,41 +47,33 @@ public final class JevEvaluator {
     return new Builder(apiKey);
   }
 
-  public Jev.NoulAnswer evaluate(Jev.NoulQuestion question, String state) {
-    return evaluateWithMetadata(question, state).answer();
+  public Jev.NoulAnswer evaluate(String state, Jev.NoulQuestion question) {
+    return evaluateWithMetadata(state, question).answer();
   }
 
-  public Jev.ThresholdNoulAnswer evaluate(Jev.ThresholdNoulQuestion question, String state) {
-    return evaluateWithMetadata(question, state).answer();
+  /**
+   * Evaluates one Noul and applies its inclusive threshold, which defaults to {@code 0.5}. This
+   * terminal operation makes exactly one provider request and may incur charges.
+   */
+  public boolean test(String state, Jev.NoulQuestion question) {
+    return evaluate(state, question).isTrue();
   }
 
   public <E extends Enum<E>> Jev.ChoiceAnswer<E> evaluate(
-      Jev.ChoiceQuestion<E> question, String state) {
-    return evaluateWithMetadata(question, state).answer();
+      String state, Jev.ChoiceQuestion<E> question) {
+    return evaluateWithMetadata(state, question).answer();
   }
 
   public <E extends Enum<E>> Jev.EnumScoreAnswer<E> evaluate(
-      Jev.EnumScoreQuestion<E> question, String state) {
-    return evaluateWithMetadata(question, state).answer();
+      String state, Jev.EnumScoreQuestion<E> question) {
+    return evaluateWithMetadata(state, question).answer();
   }
 
-  public Jev.ScoreAnswer evaluate(Jev.ScoreQuestion question, String state) {
-    return evaluateWithMetadata(question, state).answer();
+  public Jev.ScoreAnswer evaluate(String state, Jev.ScoreQuestion question) {
+    return evaluateWithMetadata(state, question).answer();
   }
 
-  public Evaluation<Jev.NoulAnswer> evaluateWithMetadata(Jev.NoulQuestion question, String state) {
-    Objects.requireNonNull(question, "question");
-    return exchange(
-        questionNode("noul", question.instructions(), noulCriteria(question.descriptions())),
-        state,
-        answer -> {
-          requireType(answer, "noul");
-          return question.answer(requiredProbability(answer, "noul"));
-        });
-  }
-
-  public Evaluation<Jev.ThresholdNoulAnswer> evaluateWithMetadata(
-      Jev.ThresholdNoulQuestion question, String state) {
+  public Evaluation<Jev.NoulAnswer> evaluateWithMetadata(String state, Jev.NoulQuestion question) {
     Objects.requireNonNull(question, "question");
     return exchange(
         questionNode("noul", question.instructions(), noulCriteria(question.descriptions())),
@@ -93,7 +85,7 @@ public final class JevEvaluator {
   }
 
   public <E extends Enum<E>> Evaluation<Jev.ChoiceAnswer<E>> evaluateWithMetadata(
-      Jev.ChoiceQuestion<E> question, String state) {
+      String state, Jev.ChoiceQuestion<E> question) {
     Objects.requireNonNull(question, "question");
     ObjectNode criteria = JSON.createObjectNode();
     question.descriptions().forEach((key, value) -> criteria.put(key.name(), value));
@@ -115,7 +107,7 @@ public final class JevEvaluator {
   }
 
   public <E extends Enum<E>> Evaluation<Jev.EnumScoreAnswer<E>> evaluateWithMetadata(
-      Jev.EnumScoreQuestion<E> question, String state) {
+      String state, Jev.EnumScoreQuestion<E> question) {
     Objects.requireNonNull(question, "question");
     ArrayNode criteria = JSON.createArrayNode();
     for (E level : question.levelType().getEnumConstants())
@@ -138,7 +130,7 @@ public final class JevEvaluator {
   }
 
   public Evaluation<Jev.ScoreAnswer> evaluateWithMetadata(
-      Jev.ScoreQuestion question, String state) {
+      String state, Jev.ScoreQuestion question) {
     Objects.requireNonNull(question, "question");
     ArrayNode criteria = JSON.createArrayNode();
     question.levels().forEach(criteria::add);

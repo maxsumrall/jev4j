@@ -14,6 +14,7 @@ import java.util.OptionalDouble;
 /** Entry point and immutable contracts for Jev questions and answers. */
 public final class Jev {
   public static final int MAX_CHOICES = 255;
+  public static final double DEFAULT_NOUL_THRESHOLD = 0.5;
   private static final double DISTRIBUTION_SUM_TOLERANCE = 1e-6;
 
   private Jev() {}
@@ -24,10 +25,7 @@ public final class Jev {
 
   public interface ScoreLevel extends Described {}
 
-  /**
-   * Declares a Noul without a decision threshold; callers choose one with {@link
-   * NoulAnswer#isTrueAt}.
-   */
+  /** Declares a Noul with the inclusive default threshold {@value #DEFAULT_NOUL_THRESHOLD}. */
   public static NoulQuestion noul(String instructions) {
     return new NoulQuestion(text(instructions, "instructions"), Map.of());
   }
@@ -48,68 +46,47 @@ public final class Jev {
     return new ScoreBuilder(text(instructions, "instructions"), List.of());
   }
 
-  public record NoulQuestion(String instructions, Map<Boolean, String> descriptions) {
-    public NoulQuestion(String instructions, Map<Boolean, String> descriptions) {
-      this.instructions = text(instructions, "instructions");
-      this.descriptions = validDescriptions(descriptions);
-    }
-
-    public NoulQuestion describe(boolean value, String description) {
-      Map<Boolean, String> copy = new LinkedHashMap<>(descriptions);
-      copy.put(value, text(description, "description"));
-      return new NoulQuestion(instructions, copy);
-    }
-
-    /** Sets the inclusive decision threshold in {@code [0, 1]}. */
-    public ThresholdNoulQuestion threshold(double threshold) {
-      return new ThresholdNoulQuestion(
-          instructions, descriptions, probability(threshold, "threshold"));
-    }
-
-    /** Constructs local answer data; it does not contact or evaluate a remote service. */
-    public NoulAnswer answer(double probabilityTrue) {
-      return new NoulAnswer(probabilityTrue);
-    }
-  }
-
-  public record ThresholdNoulQuestion(
+  public record NoulQuestion(
       String instructions, Map<Boolean, String> descriptions, double threshold) {
-    public ThresholdNoulQuestion(
-        String instructions, Map<Boolean, String> descriptions, double threshold) {
+    /**
+     * Creates a question with the default inclusive threshold of {@value #DEFAULT_NOUL_THRESHOLD}.
+     */
+    public NoulQuestion(String instructions, Map<Boolean, String> descriptions) {
+      this(instructions, descriptions, DEFAULT_NOUL_THRESHOLD);
+    }
+
+    public NoulQuestion(String instructions, Map<Boolean, String> descriptions, double threshold) {
       this.instructions = text(instructions, "instructions");
       this.descriptions = validDescriptions(descriptions);
       this.threshold = probability(threshold, "threshold");
     }
 
-    public ThresholdNoulQuestion describe(boolean value, String description) {
+    public NoulQuestion describe(boolean value, String description) {
       Map<Boolean, String> copy = new LinkedHashMap<>(descriptions);
       copy.put(value, text(description, "description"));
-      return new ThresholdNoulQuestion(instructions, copy, threshold);
+      return new NoulQuestion(instructions, copy, threshold);
     }
 
-    public ThresholdNoulQuestion threshold(double value) {
-      return new ThresholdNoulQuestion(instructions, descriptions, value);
+    /** Sets the inclusive decision threshold in {@code [0, 1]}. */
+    public NoulQuestion threshold(double threshold) {
+      return new NoulQuestion(instructions, descriptions, threshold);
     }
 
     /** Constructs local answer data; it does not contact or evaluate a remote service. */
-    public ThresholdNoulAnswer answer(double probabilityTrue) {
-      return new ThresholdNoulAnswer(probabilityTrue, threshold);
+    public NoulAnswer answer(double probabilityTrue) {
+      return new NoulAnswer(probabilityTrue, threshold);
     }
   }
 
-  public record NoulAnswer(double probabilityTrue) {
+  public record NoulAnswer(double probabilityTrue, double threshold) {
+    /**
+     * Creates an answer with the default inclusive threshold of {@value #DEFAULT_NOUL_THRESHOLD}.
+     */
     public NoulAnswer(double probabilityTrue) {
-      this.probabilityTrue = probability(probabilityTrue, "probabilityTrue");
+      this(probabilityTrue, DEFAULT_NOUL_THRESHOLD);
     }
 
-    /** Applies an inclusive threshold in {@code [0, 1]}. */
-    public boolean isTrueAt(double threshold) {
-      return probabilityTrue >= probability(threshold, "threshold");
-    }
-  }
-
-  public record ThresholdNoulAnswer(double probabilityTrue, double threshold) {
-    public ThresholdNoulAnswer(double probabilityTrue, double threshold) {
+    public NoulAnswer(double probabilityTrue, double threshold) {
       this.probabilityTrue = probability(probabilityTrue, "probabilityTrue");
       this.threshold = probability(threshold, "threshold");
     }
@@ -234,6 +211,12 @@ public final class Jev {
       return meetsThresholds;
     }
 
+    /** Returns whether {@code option} is the selected and locally accepted choice. */
+    public boolean is(E option) {
+      E requiredOption = Objects.requireNonNull(option, "option");
+      return meetsThresholds && value == requiredOption;
+    }
+
     public Optional<E> acceptedValue() {
       return meetsThresholds ? Optional.of(value) : Optional.empty();
     }
@@ -342,6 +325,11 @@ public final class Jev {
     /** Returns the accepted raw score; use {@link #nearestLevel()} for explicit enum conversion. */
     public OptionalDouble acceptedValue() {
       return meetsThresholds ? OptionalDouble.of(value) : OptionalDouble.empty();
+    }
+
+    /** Returns the nearest declared level when this answer meets its confidence threshold. */
+    public Optional<E> acceptedLevel() {
+      return meetsThresholds ? Optional.of(nearestLevel) : Optional.empty();
     }
   }
 

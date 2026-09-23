@@ -1,0 +1,93 @@
+name: Publish to Maven Central
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag, e.g. v0.1.0 (publishing is irreversible)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maven-central-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    environment: maven-central
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate and check out release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}"
+          git merge-base --is-ancestor "refs/tags/$RELEASE_TAG^{commit}" origin/main
+          git checkout --detach "refs/tags/$RELEASE_TAG"
+          test -s LICENSE
+          export RELEASE_VERSION="${RELEASE_TAG#v}"
+          python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          version = os.environ['RELEASE_VERSION']
+          project = ET.parse('pom.xml').getroot()
+          assert project.findtext('m:scm/m:tag', namespaces=ns) == os.environ['RELEASE_TAG'], 'SCM tag must match release tag'
+          for path in Path('.').rglob('pom.xml'):
+              if 'target' in path.parts:
+                  continue
+              root = ET.parse(path).getroot()
+              own = root.find('m:version', ns)
+              if own is not None:
+                  assert own.text == version, f'{path}: expected version {version}'
+              for dep in root.findall('m:parent', ns) + root.findall('m:dependencies/m:dependency', ns):
+                  if dep.findtext('m:groupId', namespaces=ns) == 'io.github.maxsumrall.jev4j':
+                      actual = dep.findtext('m:version', namespaces=ns)
+                      assert actual in (version, '${project.version}'), f'{path}: stale library version {actual}'
+          PY
+      - name: Set up Java and Central credentials
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+      - name: Build and test the release artifacts
+        run: |
+          ./mvnw --batch-mode --no-transfer-progress clean install
+          ./mvnw --batch-mode --no-transfer-progress -f consumer-tests/pom.xml verify
+          ./mvnw --batch-mode --no-transfer-progress -f examples/plain-java/pom.xml verify exec:java
+          ./mvnw --batch-mode --no-transfer-progress -f examples/spring-boot-triage/pom.xml verify
+      - name: Sign and publish libraries
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          MAVEN_GPG_KEY: ${{ secrets.MAVEN_GPG_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          for name in CENTRAL_USERNAME CENTRAL_PASSWORD MAVEN_GPG_KEY MAVEN_GPG_PASSPHRASE; do
+            if [ -z "${!name}" ]; then
+              echo "Required environment secret is missing: $name" >&2
+              exit 1
+            fi
+          done
+          timestamp="$(git show -s --format=%ct HEAD)"
+          ./mvnw --batch-mode --no-transfer-progress -Prelease deploy \
+            -Dproject.build.outputTimestamp="$timestamp"
+          echo "Published $RELEASE_TAG to Maven Central." >> "$GITHUB_STEP_SUMMARY"

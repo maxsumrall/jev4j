@@ -54,15 +54,15 @@ final class OpenRouterComponentIT {
 
     JevEvaluator.Evaluation<Jev.NoulAnswer> noul =
         evaluator.evaluateWithMetadata(
-            Jev.noul("Is the synthetic input explicitly about a duplicate charge?"),
-            "Synthetic test input: my card shows the same grocery charge twice.");
+            "Synthetic test input: my card shows the same grocery charge twice.",
+            Jev.noul("Is the synthetic input explicitly about a duplicate charge?"));
     assertProbability(noul.answer().probabilityTrue());
     assertMetadata(noul);
 
     JevEvaluator.Evaluation<Jev.ChoiceAnswer<Route>> choice =
         evaluator.evaluateWithMetadata(
-            Jev.choice(Route.class, "Choose the best route for this synthetic request"),
-            "Synthetic test input: please explain an unfamiliar invoice fee.");
+            "Synthetic test input: please explain an unfamiliar invoice fee.",
+            Jev.choice(Route.class, "Choose the best route for this synthetic request"));
     assertTrue(
         choice.answer().value() == Route.BILLING || choice.answer().value() == Route.SUPPORT);
     assertEquals(Route.values().length, choice.answer().probabilities().size());
@@ -72,8 +72,8 @@ final class OpenRouterComponentIT {
 
     JevEvaluator.Evaluation<Jev.EnumScoreAnswer<Quality>> score =
         evaluator.evaluateWithMetadata(
-            Jev.score(Quality.class, "Score the quality of this synthetic response"),
-            "Question: What is 2 + 2? Response: 4.");
+            "Question: What is 2 + 2? Response: 4.",
+            Jev.score(Quality.class, "Score the quality of this synthetic response"));
     assertTrue(Double.isFinite(score.answer().value()));
     assertTrue(score.answer().value() >= 0 && score.answer().value() <= 2);
     assertEquals(Quality.values().length, score.answer().probabilities().size());

@@ -12,9 +12,9 @@ class LiveAnswerConfiguration {
   TriageAnswerSource liveAnswerSource(JevEvaluator evaluator) {
     return message ->
         new TriageAnswers(
-            evaluator.evaluate(TriageQuestions.CATEGORY, message),
-            evaluator.evaluate(TriageQuestions.SAFETY, message),
-            evaluator.evaluate(TriageQuestions.URGENCY, message),
+            evaluator.evaluate(message, TriageQuestions.CATEGORY),
+            evaluator.evaluate(message, TriageQuestions.SAFETY),
+            evaluator.evaluate(message, TriageQuestions.URGENCY),
             "live-openrouter");
   }
 }

@@ -6,6 +6,22 @@
   <artifactId>jev4j-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
+  <name>jev4j</name>
+  <description>Typed Java decisions with Jev: boolean probabilities, enum choices, and scores.</description>
+  <url>https://github.com/maxsumrall/jev4j</url>
+  <!-- Choose and commit these properties with LICENSE before the first release. -->
+  <licenses>
+    <license><name>${project.license.name}</name><url>${project.license.url}</url><distribution>repo</distribution></license>
+  </licenses>
+  <developers>
+    <developer><id>maxsumrall</id><name>Max Sumrall</name><url>https://github.com/maxsumrall</url></developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://github.com/maxsumrall/jev4j.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/maxsumrall/jev4j.git</developerConnection>
+    <url>https://github.com/maxsumrall/jev4j</url>
+    <tag>HEAD</tag>
+  </scm>
   <modules>
     <module>jev4j-core</module>
     <module>jev4j-spring-boot-starter</module>
@@ -38,4 +54,43 @@
       </plugins>
     </pluginManagement>
   </build>
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build><plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId><version>3.5.0</version>
+          <executions><execution><id>release-contract</id><goals><goal>enforce</goal></goals><configuration><rules>
+            <requireReleaseVersion/>
+            <requireReleaseDeps/>
+            <requireProperty><property>project.license.name</property><regex>.+</regex></requireProperty>
+            <requireProperty><property>project.license.url</property><regex>https://.+</regex></requireProperty>
+          </rules></configuration></execution></executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-source-plugin</artifactId><version>3.3.1</version>
+          <executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-javadoc-plugin</artifactId><version>3.11.2</version>
+          <executions><execution><id>javadoc</id><goals><goal>jar</goal></goals></execution></executions>
+          <configuration><doclint>all,-missing</doclint></configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-gpg-plugin</artifactId><version>3.2.8</version>
+          <configuration><signer>bc</signer><bestPractices>true</bestPractices></configuration>
+          <executions><execution><id>sign</id><phase>verify</phase><goals><goal>sign</goal></goals></execution></executions>
+        </plugin>
+        <plugin>
+          <groupId>org.sonatype.central</groupId><artifactId>central-publishing-maven-plugin</artifactId><version>0.11.0</version>
+          <extensions>true</extensions>
+          <configuration>
+            <publishingServerId>central</publishingServerId>
+            <autoPublish>true</autoPublish>
+            <waitUntil>published</waitUntil>
+          </configuration>
+        </plugin>
+      </plugins></build>
+    </profile>
+  </profiles>
 </project>

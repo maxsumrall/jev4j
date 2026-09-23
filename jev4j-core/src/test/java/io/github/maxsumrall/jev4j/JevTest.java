@@ -50,11 +50,12 @@ final class JevTest {
     Jev.NoulQuestion plainQuestion = Jev.noul("rain").describe(true, "It rains");
     Jev.NoulAnswer plain = plainQuestion.answer(0.6);
     assertEquals(0.6, plain.probabilityTrue());
+    assertTrue(plain.isTrue());
     assertTrue(plain.isTrueAt(0.6));
     assertFalse(plain.isTrueAt(0.61));
 
-    Jev.ThresholdNoulQuestion configured = plainQuestion.threshold(0.6);
-    Jev.ThresholdNoulAnswer equal = configured.answer(0.6);
+    Jev.NoulQuestion configured = plainQuestion.threshold(0.6);
+    Jev.NoulAnswer equal = configured.answer(0.6);
     assertTrue(equal.isTrue());
     assertFalse(configured.answer(0.59).isTrue());
     assertTrue(configured.answer(0.61).isTrue());
@@ -63,6 +64,7 @@ final class JevTest {
     assertTrue(equal.isTrueAt(0.6));
     assertEquals(0.6, equal.threshold());
     assertTrue(equal.isTrue());
+    assertEquals(0.6, configured.describe(false, "It does not rain").threshold());
     assertThrows(IllegalArgumentException.class, () -> equal.isTrueAt(Double.POSITIVE_INFINITY));
   }
 

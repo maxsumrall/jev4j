@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +68,7 @@ final class PublicApiBlackBoxTest {
   private final AtomicReference<String> authorization = new AtomicReference<>();
   private final AtomicReference<String> method = new AtomicReference<>();
   private final AtomicReference<String> contentType = new AtomicReference<>();
+  private final AtomicInteger requestCount = new AtomicInteger();
   private HttpServer server;
   private int status;
   private long delayMillis;
@@ -87,15 +89,20 @@ final class PublicApiBlackBoxTest {
   @Test
   void noulGoldenRequestOmitsThresholdAndPreservesMetadata() throws Exception {
     response.set(fixture("noul-response.json"));
-    JevEvaluator.Evaluation<Jev.ThresholdNoulAnswer> result =
+    JevEvaluator.Evaluation<Jev.NoulAnswer> result =
         evaluator()
             .evaluateWithMetadata(
+                "clouds",
                 Jev.noul("Is rain likely?")
                     .describe(true, "rain is likely")
                     .describe(false, "rain is unlikely")
-                    .threshold(0.73),
-                "clouds");
+                    .threshold(0.73));
     assertJson("noul-request.json", request.get());
+    JsonNode goldenRequest = JSON.readTree(request.get());
+    assertEquals("clouds", goldenRequest.get("state").textValue());
+    assertEquals(
+        "Is rain likely?",
+        goldenRequest.get("questions").get("question").get("instructions").textValue());
     assertFalse(request.get().contains("threshold"));
     assertEquals("Bearer safe-dummy-key", authorization.get());
     assertEquals("POST", method.get());
@@ -107,8 +114,25 @@ final class PublicApiBlackBoxTest {
     assertEquals(11, result.usage().inputTokens());
     assertEquals(0.0001, result.usage().cost().orElseThrow());
 
-    response.set(fixture("noul-response.json"));
-    assertEquals(0.73, evaluator().evaluate(Jev.noul("plain noul"), "state").probabilityTrue());
+    response.set(
+        "{\"model\":\"fixture-provider\",\"answers\":{\"question\":{\"type\":\"noul\",\"noul\":0.5}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    JevEvaluator evaluator = evaluator();
+    int before = requestCount.get();
+    assertTrue(evaluator.test("state", Jev.noul("default boundary")));
+    assertEquals(before + 1, requestCount.get());
+    assertFalse(evaluator.test("state", Jev.noul("custom threshold").threshold(.51)));
+    assertEquals(before + 2, requestCount.get());
+    response.set(
+        "{\"model\":\"fixture-provider\",\"answers\":{\"question\":{\"type\":\"noul\",\"noul\":0.49}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    assertFalse(evaluator.test("state", Jev.noul("below default threshold")));
+    assertEquals(before + 3, requestCount.get());
+    assertEquals(
+        .8,
+        Jev.noul("preserve threshold")
+            .threshold(.8)
+            .describe(true, "yes")
+            .describe(false, "no")
+            .threshold());
   }
 
   @Test
@@ -117,25 +141,29 @@ final class PublicApiBlackBoxTest {
     Jev.ChoiceQuestion<Route> acceptedQuestion =
         Jev.choice(Route.class, "Route the request").minConfidence(.8).minProbability(.75);
     Jev.ChoiceAnswer<Route> accepted =
-        evaluator().evaluate(acceptedQuestion, "customer asks about a parcel");
+        evaluator().evaluate("customer asks about a parcel", acceptedQuestion);
     assertJson("choice-request.json", request.get());
     assertEquals(Route.DELIVERY, accepted.acceptedValue().orElseThrow());
+    assertTrue(accepted.is(Route.DELIVERY));
+    assertFalse(accepted.is(Route.BILLING));
+    assertThrows(NullPointerException.class, () -> accepted.is(null));
     assertEquals(
         Map.of(Route.BILLING, .11, Route.DELIVERY, .78, Route.OTHER, .11),
         accepted.probabilities());
     response.set(fixture("choice-response.json"));
     assertTrue(
         evaluator()
-            .evaluate(acceptedQuestion.minConfidence(.82), "customer asks about a parcel")
+            .evaluate("customer asks about a parcel", acceptedQuestion.minConfidence(.82))
             .acceptedValue()
             .isEmpty());
     response.set(fixture("choice-response.json"));
     Jev.ChoiceAnswer<Route> probabilityRejected =
         evaluator()
             .evaluate(
-                acceptedQuestion.minConfidence(0).minProbability(.79),
-                "customer asks about a parcel");
+                "customer asks about a parcel",
+                acceptedQuestion.minConfidence(0).minProbability(.79));
     assertEquals(Route.DELIVERY, probabilityRejected.value());
+    assertFalse(probabilityRejected.is(Route.DELIVERY));
     assertTrue(probabilityRejected.acceptedValue().isEmpty());
   }
 
@@ -145,11 +173,12 @@ final class PublicApiBlackBoxTest {
     Jev.EnumScoreAnswer<Quality> typed =
         evaluator()
             .evaluate(
-                Jev.score(Quality.class, "Rate quality").minConfidence(.7), "short but correct");
+                "short but correct", Jev.score(Quality.class, "Rate quality").minConfidence(.7));
     assertJson("score-request.json", request.get());
     assertEquals(1.4, typed.value());
     assertEquals(Quality.ACCEPTABLE, typed.nearestLevel());
     assertTrue(typed.acceptedValue().isEmpty());
+    assertTrue(typed.acceptedLevel().isEmpty());
     assertEquals(
         Map.of(Quality.POOR, .1, Quality.ACCEPTABLE, .4, Quality.EXCELLENT, .5),
         typed.probabilities());
@@ -157,14 +186,22 @@ final class PublicApiBlackBoxTest {
     Jev.ScoreAnswer plain =
         evaluator()
             .evaluate(
+                "short but correct",
                 Jev.score("Rate quality")
                     .level("poor")
                     .level("acceptable")
                     .level("excellent")
-                    .build(),
-                "short but correct");
+                    .build());
     assertEquals(1.4, plain.acceptedValue().orElseThrow());
     assertEquals(java.util.List.of(.1, .4, .5), plain.probabilities());
+
+    response.set(
+        "{\"model\":\"fixture-provider\",\"answers\":{\"question\":{\"type\":\"score\",\"score\":1.5,\"probabilities\":{\"0\":0.1,\"1\":0.4,\"2\":0.5},\"confidence\":0.7}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    Jev.EnumScoreAnswer<Quality> midpoint =
+        evaluator()
+            .evaluate(
+                "short but correct", Jev.score(Quality.class, "Rate quality").minConfidence(.7));
+    assertEquals(Quality.EXCELLENT, midpoint.acceptedLevel().orElseThrow());
   }
 
   @Test
@@ -173,7 +210,7 @@ final class PublicApiBlackBoxTest {
     JevEvaluationException malformed =
         assertThrows(
             JevEvaluationException.class,
-            () -> evaluator().evaluate(Jev.noul("x"), "SECRET_STATE"));
+            () -> evaluator().evaluate("SECRET_STATE", Jev.noul("x")));
     assertFalse(malformed.getMessage().contains("SENTINEL"));
     assertFalse(malformed.getMessage().contains("SECRET_STATE"));
     status = 429;
@@ -181,7 +218,7 @@ final class PublicApiBlackBoxTest {
     JevEvaluationException http =
         assertThrows(
             JevEvaluationException.class,
-            () -> evaluator().evaluate(Jev.noul("x"), "SECRET_STATE"));
+            () -> evaluator().evaluate("SECRET_STATE", Jev.noul("x")));
     assertEquals(429, http.httpStatusCode().orElseThrow());
     assertFalse(http.getMessage().contains("SENTINEL"));
   }
@@ -193,7 +230,7 @@ final class PublicApiBlackBoxTest {
     response.set("private SENTINEL");
     JevEvaluationException failure =
         assertThrows(
-            JevEvaluationException.class, () -> evaluator().evaluate(Jev.noul("x"), "SECRET"));
+            JevEvaluationException.class, () -> evaluator().evaluate("SECRET", Jev.noul("x")));
     assertEquals(code, failure.httpStatusCode().orElseThrow());
     assertFalse(failure.getMessage().contains("SENTINEL"));
     assertFalse(failure.getMessage().contains("SECRET"));
@@ -212,7 +249,7 @@ final class PublicApiBlackBoxTest {
     response.set(body);
     JevEvaluationException failure =
         assertThrows(
-            JevEvaluationException.class, () -> evaluator().evaluate(Jev.noul("x"), "SECRET"));
+            JevEvaluationException.class, () -> evaluator().evaluate("SECRET", Jev.noul("x")));
     assertTrue(failure.httpStatusCode().isEmpty());
     for (Throwable current = failure; current != null; current = current.getCause()) {
       assertFalse(Objects.toString(current.getMessage(), "").contains("SECRET"));
@@ -233,7 +270,7 @@ final class PublicApiBlackBoxTest {
       JevEvaluationException failure =
           assertThrows(
               JevEvaluationException.class,
-              () -> evaluator().evaluate(Jev.choice(Route.class, "x"), "state"));
+              () -> evaluator().evaluate("state", Jev.choice(Route.class, "x")));
       assertTrue(failure.httpStatusCode().isEmpty());
     }
   }
@@ -249,22 +286,22 @@ final class PublicApiBlackBoxTest {
     response.set(fixture("noul-response.json"));
     JevEvaluator.Builder base =
         JevEvaluator.builder("safe-dummy-key").baseUri(baseUri()).timeout(Duration.ofSeconds(1));
-    base.model("first").build().evaluate(Jev.noul("x"), "state");
+    base.model("first").build().evaluate("state", Jev.noul("x"));
     assertEquals("first", JSON.readTree(request.get()).get("model").textValue());
-    base.model("second").build().evaluate(Jev.noul("x"), "state");
+    base.model("second").build().evaluate("state", Jev.noul("x"));
     assertEquals("second", JSON.readTree(request.get()).get("model").textValue());
-    base.build().evaluate(Jev.noul("x"), "state");
+    base.build().evaluate("state", Jev.noul("x"));
     assertEquals("jev-latest", JSON.readTree(request.get()).get("model").textValue());
 
     server.stop(0);
-    assertThrows(JevEvaluationException.class, () -> base.build().evaluate(Jev.noul("x"), "state"));
+    assertThrows(JevEvaluationException.class, () -> base.build().evaluate("state", Jev.noul("x")));
     server = HttpServer.create(new InetSocketAddress(0), 0);
     server.createContext("/v1/systemone", this::handle);
     server.start();
     delayMillis = 150;
     JevEvaluator timed =
         JevEvaluator.builder("key").baseUri(baseUri()).timeout(Duration.ofMillis(20)).build();
-    assertThrows(JevEvaluationException.class, () -> timed.evaluate(Jev.noul("x"), "state"));
+    assertThrows(JevEvaluationException.class, () -> timed.evaluate("state", Jev.noul("x")));
   }
 
   private JevEvaluator evaluator() {
@@ -279,6 +316,7 @@ final class PublicApiBlackBoxTest {
   }
 
   private void handle(HttpExchange exchange) throws IOException {
+    requestCount.incrementAndGet();
     method.set(exchange.getRequestMethod());
     contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
     authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));

@@ -23,7 +23,7 @@ OPENROUTER_API_KEY=... ./mvnw -f examples/plain-java/pom.xml exec:java \
 
 No live calls are made by the tests. The example demonstrates a Noul's configured threshold and a
 one-off override, a typed Choice with exhaustive switch routing, and enum-ordered Score levels with
-descriptions, midpoint rounding through `nearestLevel()`, and a low-confidence fallback.
+descriptions, midpoint rounding through `acceptedLevel()`, and a low-confidence fallback.
 
 ## Copy elsewhere
 
