@@ -10,6 +10,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadConstraints;
+import tools.jackson.core.StreamWriteConstraints;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.json.JsonWriteFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.cfg.JsonNodeFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** Entry point and immutable contracts for Jev questions and answers. */
 public final class Jev {
@@ -18,6 +29,83 @@ public final class Jev {
   private static final double DISTRIBUTION_SUM_TOLERANCE = 1e-6;
 
   private Jev() {}
+
+  /** An immutable, eagerly serialized snapshot of text, a JSON object, or a JSON array. */
+  public static final class State {
+    private static final JsonMapper JSON =
+        JsonMapper.builder(
+                JsonFactory.builder()
+                    .streamReadConstraints(
+                        StreamReadConstraints.builder().maxNestingDepth(128).build())
+                    .streamWriteConstraints(
+                        StreamWriteConstraints.builder().maxNestingDepth(128).build())
+                    .build())
+            // Let the strict reader reject non-finite numbers instead of silently quoting them.
+            .disable(JsonWriteFeature.WRITE_NAN_AS_STRINGS)
+            .enable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .enable(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY)
+            .enable(JsonNodeFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)
+            .build();
+
+    private final JsonNode value;
+
+    private State(JsonNode value) {
+      if (!(value.isTextual() || value.isObject() || value.isArray()))
+        throw new IllegalArgumentException("state must be text, a JSON object, or a JSON array");
+      this.value = value;
+    }
+
+    /**
+     * Snapshots a value using the library's JSON mapping. Strings remain literal text; public
+     * records, string-keyed maps, lists and arrays are supported by the default mapping. Do not
+     * mutate the input graph during this call. Later mutations cannot affect the returned state.
+     *
+     * @throws NullPointerException if value is null
+     * @throws IllegalArgumentException if serialization fails, the JSON root is unsupported, or the
+     *     value contains non-finite numbers or exceeds JSON limits (including 128 nested
+     *     containers)
+     */
+    public static State from(Object value) {
+      Objects.requireNonNull(value, "value");
+      // Strings are already immutable; preserve the existing text API without parser limits.
+      if (value instanceof String text) return new State(JSON.getNodeFactory().stringNode(text));
+      try {
+        // A JSON round trip detaches even mutable values nested inside records or JSON nodes.
+        return fromJson(JSON.writeValueAsString(value));
+      } catch (JacksonException | IllegalArgumentException e) {
+        throw invalidState();
+      }
+    }
+
+    /**
+     * Parses exactly one JSON string, object, or array. Use this with an application-owned
+     * serializer when custom mapping is needed. Nested nulls and finite numbers are preserved.
+     *
+     * @throws NullPointerException if json is null
+     * @throws IllegalArgumentException if JSON is invalid, has an unsupported root, or exceeds JSON
+     *     limits (including 128 nested containers)
+     */
+    public static State fromJson(String json) {
+      Objects.requireNonNull(json, "json");
+      try {
+        return new State(JSON.readTree(json));
+      } catch (JacksonException | IllegalArgumentException e) {
+        throw invalidState();
+      }
+    }
+
+    void putInto(ObjectNode request) {
+      request.set("state", value.deepCopy());
+    }
+
+    private static IllegalArgumentException invalidState() {
+      // Parser/serializer messages and causes can contain application data.
+      return new IllegalArgumentException(
+          "invalid state: expected JSON text, object, or array within JSON limits");
+    }
+  }
 
   public interface Described {
     String description();

@@ -18,6 +18,7 @@ def generated() -> str:
         preparations = "\n".join(
             f"    Prepared<A{i}> prepared{i} = prepare(question{i});" for i in range(1, n + 1)
         )
+        questions = ", ".join(f"question{i}" for i in range(1, n + 1))
         prepared_list = ", ".join(f"prepared{i}" for i in range(1, n + 1))
         answers = ",\n        ".join(
             f"prepared{i}.cast(result.answer().get({i - 1}))" for i in range(1, n + 1)
@@ -32,6 +33,12 @@ def generated() -> str:
             f"""
   public <{types}> Evaluation{n}<{types}> evaluate(
       String state,
+      {parameters}) {{
+    return evaluate(Jev.State.from(state), {questions});
+  }}
+
+  public <{types}> Evaluation{n}<{types}> evaluate(
+      Jev.State state,
       {parameters}) {{
 {preparations}
     Evaluation<List<Object>> result = exchange(List.of({prepared_list}), state, "question1");

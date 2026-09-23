@@ -1,7 +1,7 @@
 # jev4j
 
 A Java client for [Jev](https://docs.typesafe.ai/introduction), TypeSafe's structured decision model.
-Evaluate text as a yes/no probability, an enum choice, or a score against ordered levels.
+Evaluate text or structured state as a yes/no probability, an enum choice, or a score against ordered levels.
 
 [![CI](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml)
 [![OpenRouter component tests](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml)
@@ -345,7 +345,7 @@ data before logging. API keys must use bearer-token-safe characters and
 are neither trimmed nor included in validation errors or their cause chains.
 
 Evaluation is synchronous and accepts one question or two through eight typed questions with the
-same String state. A multi-question evaluation uses one request and carries one set of metadata:
+same String or `Jev.State` input. A multi-question evaluation uses one request and carries one set of metadata:
 
 <!-- java: members -->
 ```java
@@ -361,8 +361,57 @@ RoutingDecision routingDecision = multiEvaluation.map(RoutingDecision::new);
 
 The result exposes `answer1()` through `answerN()` in question order, plus request-level model,
 usage, ID, and provider metadata. Mapping runs locally and preserves the answer types; use their
-acceptance helpers before acting on uncertain results. Structured state, streaming, automatic retries, and more than
+acceptance helpers before acting on uncertain results. Streaming, automatic retries, and more than
 eight questions per request are not supported.
+
+## Structured state
+
+Create a `Jev.State` from a public Java record, a string-keyed map, a list, or an array. The
+factory converts the input to JSON before returning and keeps a detached, immutable snapshot.
+
+<!-- java: members -->
+```java
+public record SupportTicket(String message, int failedPayments) {}
+```
+
+<!-- java: body -->
+```java
+SupportTicket ticket = new SupportTicket("Please refund this order.", 2);
+Jev.State ticketState = Jev.State.from(ticket);
+boolean ticketRequestsRefund = configured.test(ticketState, refundRequested);
+RoutingDecision ticketDecision =
+    configured.evaluate(ticketState, refundRequested, department).map(RoutingDecision::new);
+
+Jev.State orderState = Jev.State.from(java.util.Map.of("orderId", "A-104", "attempts", 2));
+Jev.State messages = Jev.State.from(java.util.List.of("Payment failed.", "Please help."));
+Jev.State attempts = Jev.State.from(new int[] {2, 5});
+Jev.State parsedState = Jev.State.fromJson("{\"message\":\"Please refund.\",\"orderId\":null}");
+```
+
+Reuse a snapshot across calls to avoid converting the original object again. Later changes to
+the input, including mutable values nested in records, do not change the snapshot. Do not mutate
+the input graph while a factory call runs; it cannot provide an atomic snapshot of concurrent
+changes. Each evaluation still serializes and sends its own request body.
+
+Strings stay literal text: `State.from("{...}")` does not parse JSON. Use `State.fromJson(...)`
+to parse JSON, including output from your application's custom serializer. Both factories accept
+JSON string, object, and array roots; numbers, booleans, and null are valid inside containers,
+but not as roots. This follows the [documented state schema](https://docs.typesafe.ai/api).
+Finite integers and decimals retain their JSON numeric precision; jev4j makes no guarantee about
+provider-side numeric handling. Empty text, objects, and arrays are valid inputs.
+
+Java null arguments throw `NullPointerException`. Unsupported values, cycles, non-finite numbers,
+malformed or trailing JSON, duplicate object keys, and JSON resource-limit violations throw
+`IllegalArgumentException` before any HTTP request, without input data or parser causes in the
+exception. State supports at most 128 nested containers and otherwise uses Jackson's JSON limits.
+The fixed internal mapping supports ordinary records and JSON-shaped collections; special Java
+types may use other representations (for example, byte arrays become base64 text). For custom
+mapping, serialize with your own library and pass the result to `State.fromJson`; jev4j exposes no
+Jackson types or mapper configuration. Your serializer's own exceptions remain your responsibility.
+
+Existing String method signatures remain available. A bare null literal such as
+`test(null, question)` is now ambiguous between String and State overloads; a typed null still
+compiles and fails at runtime. Question instructions and descriptions remain strings.
 
 ## Spring Boot
 

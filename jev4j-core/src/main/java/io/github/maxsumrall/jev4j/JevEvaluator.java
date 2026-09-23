@@ -62,6 +62,16 @@ public final class JevEvaluator {
     return evaluate(state, question).isTrue();
   }
 
+  /** Evaluates a state snapshot and applies the question's inclusive threshold. */
+  public boolean test(Jev.State state, Jev.NoulQuestion question) {
+    return evaluate(state, question).isTrue();
+  }
+
+  /** Evaluates a state snapshot, preserving the question's answer type. */
+  public <A> A evaluate(Jev.State state, Jev.Question<A> question) {
+    return evaluateWithMetadata(state, question).answer();
+  }
+
   public <E extends Enum<E>> Jev.ChoiceAnswer<E> evaluate(
       String state, Jev.ChoiceQuestion<E> question) {
     return evaluateWithMetadata(state, question).answer();
@@ -77,25 +87,26 @@ public final class JevEvaluator {
   }
 
   public Evaluation<Jev.NoulAnswer> evaluateWithMetadata(String state, Jev.NoulQuestion question) {
-    return evaluateQuestion(state, question);
+    return evaluateWithMetadata(Jev.State.from(state), question);
   }
 
   public <E extends Enum<E>> Evaluation<Jev.ChoiceAnswer<E>> evaluateWithMetadata(
       String state, Jev.ChoiceQuestion<E> question) {
-    return evaluateQuestion(state, question);
+    return evaluateWithMetadata(Jev.State.from(state), question);
   }
 
   public <E extends Enum<E>> Evaluation<Jev.EnumScoreAnswer<E>> evaluateWithMetadata(
       String state, Jev.EnumScoreQuestion<E> question) {
-    return evaluateQuestion(state, question);
+    return evaluateWithMetadata(Jev.State.from(state), question);
   }
 
   public Evaluation<Jev.ScoreAnswer> evaluateWithMetadata(
       String state, Jev.ScoreQuestion question) {
-    return evaluateQuestion(state, question);
+    return evaluateWithMetadata(Jev.State.from(state), question);
   }
 
-  private <A> Evaluation<A> evaluateQuestion(String state, Jev.Question<A> question) {
+  /** Evaluates a state snapshot and returns request-level metadata with the typed answer. */
+  public <A> Evaluation<A> evaluateWithMetadata(Jev.State state, Jev.Question<A> question) {
     Prepared<A> prepared = prepare(question);
     Evaluation<List<Object>> result = exchange(List.of(prepared), state, QUESTION_KEY);
     return new Evaluation<>(
@@ -108,10 +119,10 @@ public final class JevEvaluator {
   }
 
   private Evaluation<List<Object>> exchange(
-      List<Prepared<?>> preparedQuestions, String state, String firstKey) {
+      List<Prepared<?>> preparedQuestions, Jev.State state, String firstKey) {
     Objects.requireNonNull(state, "state");
     ObjectNode root = JSON.createObjectNode();
-    root.put("state", state);
+    state.putInto(root);
     root.put("model", model);
     ObjectNode questions = root.putObject("questions");
     for (int i = 0; i < preparedQuestions.size(); i++) {
@@ -389,6 +400,11 @@ public final class JevEvaluator {
 
   public <A1, A2> Evaluation2<A1, A2> evaluate(
       String state, Jev.Question<A1> question1, Jev.Question<A2> question2) {
+    return evaluate(Jev.State.from(state), question1, question2);
+  }
+
+  public <A1, A2> Evaluation2<A1, A2> evaluate(
+      Jev.State state, Jev.Question<A1> question1, Jev.Question<A2> question2) {
     Prepared<A1> prepared1 = prepare(question1);
     Prepared<A2> prepared2 = prepare(question2);
     Evaluation<List<Object>> result = exchange(List.of(prepared1, prepared2), state, "question1");
@@ -442,6 +458,14 @@ public final class JevEvaluator {
 
   public <A1, A2, A3> Evaluation3<A1, A2, A3> evaluate(
       String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3) {
+    return evaluate(Jev.State.from(state), question1, question2, question3);
+  }
+
+  public <A1, A2, A3> Evaluation3<A1, A2, A3> evaluate(
+      Jev.State state,
       Jev.Question<A1> question1,
       Jev.Question<A2> question2,
       Jev.Question<A3> question3) {
@@ -504,6 +528,15 @@ public final class JevEvaluator {
 
   public <A1, A2, A3, A4> Evaluation4<A1, A2, A3, A4> evaluate(
       String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4) {
+    return evaluate(Jev.State.from(state), question1, question2, question3, question4);
+  }
+
+  public <A1, A2, A3, A4> Evaluation4<A1, A2, A3, A4> evaluate(
+      Jev.State state,
       Jev.Question<A1> question1,
       Jev.Question<A2> question2,
       Jev.Question<A3> question3,
@@ -573,6 +606,16 @@ public final class JevEvaluator {
 
   public <A1, A2, A3, A4, A5> Evaluation5<A1, A2, A3, A4, A5> evaluate(
       String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5) {
+    return evaluate(Jev.State.from(state), question1, question2, question3, question4, question5);
+  }
+
+  public <A1, A2, A3, A4, A5> Evaluation5<A1, A2, A3, A4, A5> evaluate(
+      Jev.State state,
       Jev.Question<A1> question1,
       Jev.Question<A2> question2,
       Jev.Question<A3> question3,
@@ -660,6 +703,18 @@ public final class JevEvaluator {
 
   public <A1, A2, A3, A4, A5, A6> Evaluation6<A1, A2, A3, A4, A5, A6> evaluate(
       String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5,
+      Jev.Question<A6> question6) {
+    return evaluate(
+        Jev.State.from(state), question1, question2, question3, question4, question5, question6);
+  }
+
+  public <A1, A2, A3, A4, A5, A6> Evaluation6<A1, A2, A3, A4, A5, A6> evaluate(
+      Jev.State state,
       Jev.Question<A1> question1,
       Jev.Question<A2> question2,
       Jev.Question<A3> question3,
@@ -758,6 +813,26 @@ public final class JevEvaluator {
 
   public <A1, A2, A3, A4, A5, A6, A7> Evaluation7<A1, A2, A3, A4, A5, A6, A7> evaluate(
       String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5,
+      Jev.Question<A6> question6,
+      Jev.Question<A7> question7) {
+    return evaluate(
+        Jev.State.from(state),
+        question1,
+        question2,
+        question3,
+        question4,
+        question5,
+        question6,
+        question7);
+  }
+
+  public <A1, A2, A3, A4, A5, A6, A7> Evaluation7<A1, A2, A3, A4, A5, A6, A7> evaluate(
+      Jev.State state,
       Jev.Question<A1> question1,
       Jev.Question<A2> question2,
       Jev.Question<A3> question3,
@@ -870,6 +945,28 @@ public final class JevEvaluator {
 
   public <A1, A2, A3, A4, A5, A6, A7, A8> Evaluation8<A1, A2, A3, A4, A5, A6, A7, A8> evaluate(
       String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5,
+      Jev.Question<A6> question6,
+      Jev.Question<A7> question7,
+      Jev.Question<A8> question8) {
+    return evaluate(
+        Jev.State.from(state),
+        question1,
+        question2,
+        question3,
+        question4,
+        question5,
+        question6,
+        question7,
+        question8);
+  }
+
+  public <A1, A2, A3, A4, A5, A6, A7, A8> Evaluation8<A1, A2, A3, A4, A5, A6, A7, A8> evaluate(
+      Jev.State state,
       Jev.Question<A1> question1,
       Jev.Question<A2> question2,
       Jev.Question<A3> question3,

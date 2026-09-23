@@ -12,12 +12,15 @@ import io.github.maxsumrall.jev4j.Jev;
 import io.github.maxsumrall.jev4j.JevEvaluationException;
 import io.github.maxsumrall.jev4j.JevEvaluator;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -91,6 +94,166 @@ final class PublicApiBlackBoxTest {
   @AfterEach
   void stop() {
     server.stop(0);
+  }
+
+  public record Ticket(String message, List<Integer> attempts) {}
+
+  @Test
+  void structuredStateIsAnEagerReusableSnapshotWithUnchangedDiagnostics() throws Exception {
+    response.set(fixture("noul-response.json"));
+    requestId.set("structured-id");
+    List<Integer> attempts = new ArrayList<>(List.of(2, 5));
+    Ticket ticket = new Ticket("refund", attempts);
+    Jev.State state = Jev.State.from(ticket);
+    attempts.set(0, 9);
+    JevEvaluator client = evaluator();
+    Jev.NoulQuestion question = Jev.noul("refund?").threshold(.73);
+    JevEvaluator.Evaluation<Jev.NoulAnswer> result = client.evaluateWithMetadata(state, question);
+    assertTrue(result.answer().isTrue());
+    assertEquals("structured-id", result.requestId().orElseThrow());
+    assertEquals(11, result.usage().inputTokens());
+    assertEquals(
+        JSON.readTree("{\"message\":\"refund\",\"attempts\":[2,5]}"),
+        JSON.readTree(request.get()).path("state"));
+    attempts.add(7);
+    assertFalse(client.test(state, question.threshold(.74)));
+    assertEquals(JSON.readTree("[2,5]"), JSON.readTree(request.get()).at("/state/attempts"));
+    assertTrue(client.test(Jev.State.from(ticket), question));
+    assertEquals(JSON.readTree("[9,5,7]"), JSON.readTree(request.get()).at("/state/attempts"));
+    assertEquals(3, requestCount.get());
+
+    status = 422;
+    response.set("PRIVATE_STATE");
+    JevEvaluationException error =
+        assertThrows(JevEvaluationException.class, () -> client.test(state, question));
+    assertEquals(JevEvaluationException.FailureCategory.HTTP, error.category());
+    assertEquals(422, error.httpStatusCode().orElseThrow());
+    assertEquals("structured-id", error.requestId().orElseThrow());
+    assertEquals("evaluation failed with HTTP status 422", error.getMessage());
+    assertNull(error.getCause());
+  }
+
+  @Test
+  void stateWireShapesKeepTextDistinctAndPreserveExactNumbers() throws Exception {
+    response.set(fixture("noul-response.json"));
+    JevEvaluator client = evaluator();
+    Jev.NoulQuestion question = Jev.noul("x");
+    for (Jev.State state :
+        List.of(Jev.State.from("{\"x\":1}"), Jev.State.fromJson("\"{\\\"x\\\":1}\""))) {
+      client.test(state, question);
+      assertEquals("{\"x\":1}", JSON.readTree(request.get()).path("state").stringValue());
+    }
+    client.test("{\"x\":1}", question);
+    assertEquals("{\"x\":1}", JSON.readTree(request.get()).path("state").stringValue());
+    client.test(Jev.State.fromJson("{\"x\":1,\"missing\":null}"), question);
+    assertEquals(1, JSON.readTree(request.get()).at("/state/x").intValue());
+    assertTrue(JSON.readTree(request.get()).at("/state/missing").isNull());
+    client.test(Jev.State.from(new int[] {2, 5}), question);
+    assertEquals(JSON.readTree("[2,5]"), JSON.readTree(request.get()).path("state"));
+    client.test(Jev.State.from(List.of("first", "second")), question);
+    assertEquals(
+        JSON.readTree("[\"first\",\"second\"]"), JSON.readTree(request.get()).path("state"));
+
+    String decimal = "123456789.12345678901234567890";
+    String integer = "123456789012345678901234567890";
+    for (Jev.State state :
+        List.of(
+            Jev.State.from(Map.of("d", new BigDecimal(decimal), "i", new BigInteger(integer))),
+            Jev.State.fromJson("{\"d\":" + decimal + ",\"i\":" + integer + "}"))) {
+      client.test(state, question);
+      // Inspect wire tokens, not a parser which might repeat the implementation's rounding.
+      assertTrue(request.get().contains("\"d\":" + decimal));
+      assertTrue(request.get().contains("\"i\":" + integer));
+    }
+  }
+
+  @Test
+  void invalidStatesNeverSendARequest() {
+    JevEvaluator client = evaluator();
+    Jev.NoulQuestion question = Jev.noul("x");
+    assertThrows(NullPointerException.class, () -> Jev.State.from(null));
+    assertThrows(NullPointerException.class, () -> Jev.State.fromJson(null));
+    assertThrows(NullPointerException.class, () -> client.test((Jev.State) null, question));
+    assertThrows(NullPointerException.class, () -> client.test((String) null, question));
+    assertThrows(IllegalArgumentException.class, () -> client.test(Jev.State.from(true), question));
+    assertThrows(
+        IllegalArgumentException.class, () -> client.test(Jev.State.fromJson("null"), question));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> client.test(Jev.State.from(Map.of("secret", Double.NaN)), question));
+    List<Object> cycle = new ArrayList<>();
+    cycle.add(cycle);
+    assertThrows(
+        IllegalArgumentException.class, () -> client.test(Jev.State.from(cycle), question));
+    assertEquals(0, requestCount.get());
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {2, 8})
+  void structuredMultiPreservesMixedTypesOrderAndOneRequest(int arity) {
+    StringBuilder answers =
+        new StringBuilder(
+            "\"question2\":{\"type\":\"score\",\"score\":0.8,\"probabilities\":{\"0\":0.2,\"1\":0.8},\"confidence\":0.7},"
+                + "\"question1\":{\"type\":\"noul\",\"noul\":0.6}");
+    for (int i = 3; i <= arity; i++) {
+      answers
+          .append(",\"question")
+          .append(i)
+          .append("\":{\"type\":\"noul\",\"noul\":0.")
+          .append(i)
+          .append('}');
+    }
+    response.set(
+        "{\"model\":\"m\",\"answers\":{"
+            + answers
+            + "},\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}");
+    requestId.set("structured-multi-id");
+    JevEvaluator client = evaluator();
+    Jev.State state = Jev.State.from(Map.of("message", "help"));
+    Jev.NoulQuestion q = Jev.noul("urgent?").threshold(.61);
+    Jev.ScoreQuestion score = Jev.score("severity").level("low").level("high").build();
+    record Decision(boolean urgent, double severity) {}
+    Decision decision;
+    if (arity == 2) {
+      JevEvaluator.Evaluation2<Jev.NoulAnswer, Jev.ScoreAnswer> result =
+          client.evaluate(state, q, score);
+      decision =
+          result.map((Jev.NoulAnswer a, Jev.ScoreAnswer b) -> new Decision(a.isTrue(), b.value()));
+      assertEquals("structured-multi-id", result.requestId().orElseThrow());
+      assertEquals(7, result.usage().inputTokens());
+    } else {
+      JevEvaluator.Evaluation8<
+              Jev.NoulAnswer,
+              Jev.ScoreAnswer,
+              Jev.NoulAnswer,
+              Jev.NoulAnswer,
+              Jev.NoulAnswer,
+              Jev.NoulAnswer,
+              Jev.NoulAnswer,
+              Jev.NoulAnswer>
+          result = client.evaluate(state, q, score, q, q, q, q, q, q);
+      decision = new Decision(result.answer1().isTrue(), result.answer2().value());
+      assertEquals(
+          List.of(.3, .4, .5, .6, .7, .8),
+          result.map(
+              (a, b, c, d, e, f, g, h) ->
+                  List.of(
+                      c.probabilityTrue(),
+                      d.probabilityTrue(),
+                      e.probabilityTrue(),
+                      f.probabilityTrue(),
+                      g.probabilityTrue(),
+                      h.probabilityTrue())));
+      assertEquals("structured-multi-id", result.requestId().orElseThrow());
+      assertEquals(7, result.usage().inputTokens());
+    }
+    assertEquals(new Decision(false, .8), decision);
+    assertEquals(1, requestCount.get());
+    JsonNode sent = JSON.readTree(request.get());
+    assertEquals(JSON.readTree("{\"message\":\"help\"}"), sent.path("state"));
+    assertEquals(arity, sent.path("questions").size());
+    assertEquals("score", sent.at("/questions/question2/type").stringValue());
+    assertFalse(request.get().contains("threshold"));
   }
 
   @Test
