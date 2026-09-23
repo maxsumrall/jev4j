@@ -291,6 +291,7 @@ public final class Jev {
     private final Map<E, Double> probabilities;
     private final double confidence;
     private final E nearestLevel;
+    private final E mostLikelyLevel;
     private final boolean meetsThresholds;
 
     public EnumScoreAnswer(
@@ -304,6 +305,12 @@ public final class Jev {
       this.probabilities = distribution(levelType, probabilities);
       this.confidence = probability(confidence, "confidence");
       this.nearestLevel = levels[(int) Math.floor(value + 0.5)];
+      @Var E mostLikely = levels[0];
+      for (E level : levels) {
+        if (Objects.requireNonNull(this.probabilities.get(level))
+            > Objects.requireNonNull(this.probabilities.get(mostLikely))) mostLikely = level;
+      }
+      this.mostLikelyLevel = mostLikely;
       this.meetsThresholds = confidence >= probability(minConfidence, "minConfidence");
     }
 
@@ -322,6 +329,14 @@ public final class Jev {
     /** Converts to the nearest declared level; exact midpoints round toward the higher level. */
     public E nearestLevel() {
       return nearestLevel;
+    }
+
+    /**
+     * Returns the level with the highest reported probability, without a confidence guard. Ties
+     * choose the first declared enum level.
+     */
+    public E mostLikelyLevel() {
+      return mostLikelyLevel;
     }
 
     public boolean meetsThresholds() {

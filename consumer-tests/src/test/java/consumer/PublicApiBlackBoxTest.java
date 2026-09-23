@@ -62,6 +62,12 @@ final class PublicApiBlackBoxTest {
     }
   }
 
+  enum Level {
+    LOW,
+    MEDIUM,
+    HIGH
+  }
+
   private static final ObjectMapper JSON = new ObjectMapper();
   private final AtomicReference<String> response = new AtomicReference<>();
   private final AtomicReference<String> request = new AtomicReference<>();
@@ -179,6 +185,7 @@ final class PublicApiBlackBoxTest {
     assertJson("score-request.json", request.get());
     assertEquals(1.4, typed.value());
     assertEquals(Quality.ACCEPTABLE, typed.nearestLevel());
+    assertEquals(Quality.EXCELLENT, typed.mostLikelyLevel());
     assertTrue(typed.acceptedValue().isEmpty());
     assertTrue(typed.acceptedLevel().isEmpty());
     assertEquals(
@@ -204,6 +211,51 @@ final class PublicApiBlackBoxTest {
             .evaluate(
                 "short but correct", Jev.score(Quality.class, "Rate quality").minConfidence(.7));
     assertEquals(Quality.EXCELLENT, midpoint.acceptedLevel().orElseThrow());
+  }
+
+  @Test
+  void mostLikelyLevelDiffersFromNearestWithoutChangingAcceptance() {
+    response.set(
+        """
+        {"model":"m","answers":{"question":{"type":"score","score":0.95,
+        "probabilities":{"0":0.45,"1":0.15,"2":0.40},"confidence":0.7}},
+        "usage":{"input_tokens":1,"output_tokens":1}}
+        """);
+    Jev.EnumScoreQuestion<Level> question = Jev.score(Level.class, "Rate level").minConfidence(.7);
+    Jev.EnumScoreAnswer<Level> accepted = evaluator().evaluate("state", question);
+    Level mostLikely = accepted.mostLikelyLevel();
+    assertEquals(Level.LOW, mostLikely);
+    assertEquals(.95, accepted.value());
+    assertEquals(Level.MEDIUM, accepted.nearestLevel());
+    assertEquals(Level.MEDIUM, accepted.acceptedLevel().orElseThrow());
+    assertEquals(.95, accepted.acceptedValue().orElseThrow());
+    assertEquals(
+        Map.of(Level.LOW, .45, Level.MEDIUM, .15, Level.HIGH, .40), accepted.probabilities());
+
+    Jev.EnumScoreAnswer<Level> rejected =
+        evaluator().evaluate("state", question.minConfidence(.71));
+    assertFalse(rejected.meetsThresholds());
+    assertTrue(rejected.acceptedLevel().isEmpty());
+    assertTrue(rejected.acceptedValue().isEmpty());
+    assertEquals(.95, rejected.value());
+    assertEquals(Level.MEDIUM, rejected.nearestLevel());
+    assertEquals(Level.LOW, rejected.mostLikelyLevel());
+    assertEquals(accepted.probabilities(), rejected.probabilities());
+  }
+
+  @Test
+  void mostLikelyLevelBreaksNonadjacentTiesByEnumOrderNotJsonOrder() {
+    response.set(
+        """
+        {"model":"m","answers":{"question":{"type":"score","score":1.0,
+        "probabilities":{"2":0.45,"1":0.10,"0":0.45},"confidence":0.8}},
+        "usage":{"input_tokens":1,"output_tokens":1}}
+        """);
+    Jev.EnumScoreAnswer<Level> answer =
+        evaluator().evaluate("state", Jev.score(Level.class, "Rate level"));
+    assertEquals(Level.LOW, answer.mostLikelyLevel());
+    assertEquals(Level.MEDIUM, answer.nearestLevel());
+    assertEquals(Level.MEDIUM, answer.acceptedLevel().orElseThrow());
   }
 
   @Test

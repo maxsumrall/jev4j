@@ -217,6 +217,20 @@ Jev returns a fractional score, such as 1.6. Read it through `value()` or `accep
 `acceptedLevel()` applies the confidence threshold and then rounds to the nearest enum; exact
 midpoints round upward. `nearestLevel()` provides the same rounding without the acceptance guard.
 
+Use `mostLikelyLevel()` for the enum with the highest reported probability. Ties choose the first
+declared level. For example, with score `0.95` and probabilities `CALM: 0.45`, `FRUSTRATED: 0.15`,
+`VERY_ANGRY: 0.40`:
+
+```java
+double score = rating.value();                       // 0.95
+Frustration nearest = rating.nearestLevel();         // FRUSTRATED
+Frustration mostLikely = rating.mostLikelyLevel();   // CALM
+```
+
+Neither helper applies the confidence threshold. Keep `probabilities()` and `confidence()` when
+uncertainty matters; the most likely level need not have a majority of the probability.
+`acceptedLevel()` still returns the nearest level, or an empty optional below the confidence threshold.
+
 Use the optional level when composing with existing application methods:
 
 ```java
