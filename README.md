@@ -1,7 +1,6 @@
 # jev4j
 
 [![CI](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml)
-[![OpenRouter component tests](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml)
 
 **Use AI decisions in ordinary Java code.**
 
@@ -12,7 +11,9 @@ a question in plain English. Use the answer in Java.
 
 <!-- java: body -->
 ```java
-if (jev.test("I want my money back!", Jev.noul("Is this a refund request?"))) {
+var isRefundRequest = Jev.noul("Is this a refund request?");
+
+if (jev.test("I want my money back!", isRefundRequest)) {
     System.out.println("Start the refund workflow");
 }
 ```
@@ -48,14 +49,14 @@ enum Mood {
     FURIOUS
 }
 
-double frustrationScore =
+Mood mood =
         jev.evaluate(
                         "This is the third failed delivery!",
                         Jev.score(Mood.class, "How frustrated is the customer?"))
-                .value();
+                .nearestLevel();
 ```
 
-Get a fractional score from `0` (CALM) to `2` (FURIOUS).
+Get the nearest `Mood` on your scale; `.value()` keeps the fractional score.
 
 These snippets use an evaluator named `jev`; [setup and imports are below](#get-started).
 Each evaluation makes one provider request and may incur charges. Use
@@ -350,44 +351,10 @@ assert synthetic.isTrue();
 assert !synthetic.isTrueAt(0.95);
 ```
 
-## Testing and CI
+## Contributing
 
-Run the offline build from the repository root with JDK 17:
-
-```shell
-./mvnw clean install
-./mvnw -f consumer-tests/pom.xml verify
-./mvnw -f examples/plain-java/pom.xml verify exec:java
-./mvnw -f examples/spring-boot-triage/pom.xml verify
-```
-
-Java uses Google Java Format's AOSP style. `verify` checks formatting.
-Run `./mvnw fmt:format` to format the libraries; add `-f path/to/pom.xml` for a standalone project.
-
-[CI](.github/workflows/ci.yml) checks formatting, static analysis, public API contracts, and example
-endpoints, including Java 21/25 compatibility. `ReadmeCompileTest` compiles the Java fences in this
-README with Java 17 rules; it does not execute them. Keep the hidden `java: members` / `java: body`
-markers on new Java fences so the test can assemble the shared scenario.
-
-After changing the generated multi-question API, run:
-
-```shell
-python3 jev4j-core/generate-multi-evaluations.py
-./mvnw -pl jev4j-core fmt:format
-```
-
-Commit the generated source. Repeating those commands on a clean checkout should leave no diff.
-
-[OpenRouter component tests](.github/workflows/openrouter-component.yml) run on `main` pushes with
-the repository's API key. They make up to three paid requests, one per primitive, without retries.
-To opt in locally, set `OPENROUTER_API_KEY` and run:
-
-```shell
-./mvnw -pl jev4j-core -Popenrouter-component verify
-```
-
-Development uses `0.0.0-SNAPSHOT`; releases use CalVer `YYYY.M.N`, which indicates order rather than
-API compatibility. See the [release guide](docs/releasing.md) for publishing.
+See the [contributor guide](CONTRIBUTING.md) for development and the [release guide](docs/releasing.md)
+for publishing.
 
 ## Upstream documentation
 
