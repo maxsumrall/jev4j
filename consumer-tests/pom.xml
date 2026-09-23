@@ -3,10 +3,10 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <!-- Deliberately standalone: verifies the installed artifacts as a consumer sees them. -->
-  <groupId>io.github.maxsumrall.jev4j.tests</groupId><artifactId>consumer-tests</artifactId><version>0.1.1-SNAPSHOT</version>
+  <groupId>io.github.maxsumrall.jev4j.tests</groupId><artifactId>consumer-tests</artifactId><version>0.0.0-SNAPSHOT</version>
   <properties><maven.compiler.release>17</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding><maven.deploy.skip>true</maven.deploy.skip></properties>
   <dependencies>
-    <dependency><groupId>io.github.maxsumrall.jev4j</groupId><artifactId>jev4j-core</artifactId><version>0.1.1-SNAPSHOT</version></dependency>
+    <dependency><groupId>io.github.maxsumrall.jev4j</groupId><artifactId>jev4j-core</artifactId><version>0.0.0-SNAPSHOT</version></dependency>
     <dependency><groupId>tools.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>3.0.2</version><scope>test</scope></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.11.4</version><scope>test</scope></dependency>
   </dependencies>

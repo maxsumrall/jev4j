@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.maxsumrall.jev4j</groupId>
   <artifactId>jev4j-parent</artifactId>
-  <version>0.1.1-SNAPSHOT</version>
+  <version>0.0.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>jev4j</name>
   <description>Typed Java decisions with Jev: boolean probabilities, enum choices, and scores.</description>

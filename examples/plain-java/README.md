@@ -27,7 +27,7 @@ descriptions, midpoint rounding through `acceptedLevel()`, and a low-confidence 
 
 ## Copy elsewhere
 
-After `jev4j-core:0.1.1-SNAPSHOT` is installed in your local Maven repository, copy this entire
+After `jev4j-core:0.0.0-SNAPSHOT` is installed in your local Maven repository, copy this entire
 directory anywhere and use ordinary Maven there:
 
 ```sh

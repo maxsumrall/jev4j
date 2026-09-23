@@ -36,6 +36,10 @@ returns `true` when the probability of yes is at least `0.5`. Override the cutof
 **Early development.** Requires Java 17; the API may change. Version `0.1.0` is
 available from Maven Central.
 
+Development builds use `0.0.0-SNAPSHOT`. New releases use CalVer `YYYY.M.N`,
+which indicates release order rather than API compatibility. See the
+[release guide](docs/releasing.md) for the manual CI release flow.
+
 ## Get started
 
 Add the core library to your application. No custom Maven repository is needed:

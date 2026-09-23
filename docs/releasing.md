@@ -29,65 +29,88 @@ entry after Central makes the release available.
    | `CENTRAL_PASSWORD` | Central token password |
    | `MAVEN_GPG_KEY` | ASCII-armored private signing key |
    | `MAVEN_GPG_PASSPHRASE` | Signing key passphrase |
+   | `RELEASE_TAG_TOKEN` | Owner's repository-scoped token with Contents read/write for protected tag creation |
 
 The GPG plugin's Bouncy Castle signer reads the key from the environment. Do not
 commit keys, tokens, or Maven settings containing credentials. Signing and Central
-secrets are exposed only to the publishing step. The job has read-only GitHub
-permissions and does not use a shared Maven cache.
+secrets are exposed only to the publishing step. The job's `GITHUB_TOKEN` has
+read-only permissions. Only the tag step receives `RELEASE_TAG_TOKEN`; it creates
+an annotated tag as `Max Sumrall <jmsumrall@gmail.com>`. Keep the administrator-only
+creation rule and the no-update/no-deletion rules. A rejected tag request stops
+the job before any Central upload; do not weaken protections to make it pass.
+Secret presence alone does not prove tagging authorization. The workflow uses no
+shared Maven cache.
 
-## Prepare a release
+## Development and version policy
 
-1. Change the root version, module parent versions, and standalone test/example
-   versions and library dependencies from the current `-SNAPSHOT` version to the release version,
-   for example `0.1.0`. Set the parent and both library POMs' SCM tags to `v0.1.0`. Update README
-   installation instructions to the release coordinates.
-2. Run the normal CI checks and inspect the unsigned release artifacts locally:
+Keep all six development POMs on `0.0.0-SNAPSHOT`, with SCM tags set to `HEAD`.
+Do not commit release-version changes or bump snapshots after a release.
+The standalone examples and consumer tests use the locally installed snapshot.
+README installation coordinates refer to a published version; update them after
+confirming a release is available, not as a prerequisite for publishing.
 
-   ```shell
-   ./mvnw --batch-mode --no-transfer-progress -Prelease -Dgpg.skip=true clean install
-   ./mvnw --batch-mode --no-transfer-progress -f consumer-tests/pom.xml verify
-   ./mvnw --batch-mode --no-transfer-progress -f examples/plain-java/pom.xml verify exec:java
-   ./mvnw --batch-mode --no-transfer-progress -f examples/spring-boot-triage/pom.xml verify
-   ```
+New releases use **CalVer `YYYY.M.N`**, for example `2026.9.1`, then `2026.9.2`,
+then `2026.10.1`. Use the UTC release month and a positive sequence number within
+that month, without leading zeroes. Choose a number higher than previous reserved
+versions in that month; gaps are fine. The workflow validates the format but does
+not allocate numbers or enforce today's date. CalVer communicates release order,
+not API compatibility. Describe breaking changes in release notes; consumers
+should pin versions and review changes before upgrading.
 
-   This produces source and Javadoc JARs without uploading anything. The profile
-   rejects snapshot versions/dependencies and missing license properties.
-3. Commit on a preparation branch and promote the checked commit to `main` using
-   the fast-forward procedure below. Wait for CI and the live
-   OpenRouter workflow to pass for that commit. Obtain explicit approval of the exact
-   version and full commit SHA, then create and push an annotated `v0.1.0` tag on
-   that commit. Do not move a published release tag.
-4. In Actions, run **Publish to Maven Central** from `main`, entering `v0.1.0`
-   and the approved full commit SHA.
-   Approve the environment deployment after reviewing the tag's commit.
+## Run a release
 
-The job checks tag/version consistency and ancestry on `main`, rebuilds and tests
-the tagged code, then attaches sources, Javadoc, and signatures. Sonatype's
-[Central Publishing plugin](https://central.sonatype.org/publish/publish-portal-maven/)
-uploads the reactor as a bundle and waits for publication. It does not use the
-retired OSSRH staging endpoints. Build timestamps use the tagged commit time.
+1. Promote development changes to `main` using the checked fast-forward procedure
+   below. Wait for CI and OpenRouter to pass on its latest commit.
+2. Choose an unused CalVer version. Dispatch **Publish to Maven Central** from
+   `main`, with that version as its only input. Do not create the tag yourself.
+3. Review the version and full source SHA shown in the run name before approving
+   the `maven-central` deployment. GitHub pins `github.sha` at dispatch: new commits
+   pushed while approval is pending do not enter this release. If that SHA is not
+   the one you approved, cancel and start a new dispatch.
+4. After approval, CI substitutes versions in its checkout, checks the exact
+   source SHA's CI/OpenRouter runs, builds and tests, then reserves an annotated
+   `vVERSION` tag on that source SHA. Only after tag creation succeeds does CI sign
+   and deploy. No version-bump commit or push to `main` occurs.
 
-Publication is irreversible: Central does not allow replacing a released version.
-If a job times out after uploading, inspect the deployment in Central Portal before
-retrying. A timeout does not prove publication failed. Fix a published defect in a
-new version. After release, move `main` and standalone dependencies to the next
-snapshot version in a separate commit.
+Sonatype's [Central Publishing plugin](https://central.sonatype.org/publish/publish-portal-maven/)
+uses `autoPublish=true` and `waitUntil=published`: upload, validation, and
+irreversible publication are one operation. It does not use retired OSSRH
+endpoints. Running ordinary CI, pushing a tag, or building with `-Prelease` alone
+does not publish. The workflow does not create a GitHub Release or run paid
+provider tests itself.
 
-Running ordinary CI, pushing a tag, or building with `-Prelease` alone does not
-publish. The publishing operation is `mvn -Prelease deploy`; do not run it locally
-unless you intend to publish. The workflow does not create GitHub releases or run
-paid provider tests itself.
+The tag records the **source commit**, whose POMs still contain the snapshot.
+Published POMs and embedded JAR POMs contain the selected release version and
+`vVERSION` SCM tag. To reproduce unsigned packaging, use a disposable checkout of
+the source tag and run:
 
-## First-release prerequisite checks
+```shell
+python3 .github/release-version.py 2026.9.1
+./mvnw --batch-mode --no-transfer-progress -Prelease -Dgpg.skip=true clean install \
+  -Dproject.build.outputTimestamp="$(git show -s --format=%ct HEAD)"
+./mvnw --batch-mode --no-transfer-progress -f consumer-tests/pom.xml verify
+./mvnw --batch-mode --no-transfer-progress -f examples/plain-java/pom.xml verify exec:java
+./mvnw --batch-mode --no-transfer-progress -f examples/spring-boot-triage/pom.xml verify
+```
 
-The workflow requires both the existing release tag and the approved full commit
-SHA. It rejects a tag pointing elsewhere and requires successful `push` runs on
-`main` of `ci.yml` and `openrouter-component.yml` for that exact commit. The gate
-checks the latest matching run of each workflow and verifies the returned SHA, branch, event, status, and conclusion. Missing runs, pending/failed/cancelled
-runs, malformed responses, and API/permission errors all stop publication. The
-GitHub token has only `contents: read` for checkout and `actions: read` for these
-workflow-run queries; Central publishing uses its separate token. Review both
-the workflow on the dispatch ref and the code at the release tag.
+Substitute the version being reproduced. Do not commit the modified POMs. These
+commands generate source/Javadoc JARs without signing or uploading. The release
+profile rejects snapshot versions/dependencies and missing license properties.
+
+## Publication guards
+
+The workflow accepts only `main` dispatches and rejects Actions reruns. It checks
+for an existing version tag and checks all three Central POM URLs, requiring 404
+responses. Network errors or unexpected HTTP statuses stop publication. A 404 is
+not proof that no upload is pending in Central; inspect Portal after an ambiguous
+run. Atomic tag creation reserves the version before any upload and rejects a
+competing release that reserved the same version after checkout.
+
+CI requires successful `push` runs on `main` of `ci.yml` and
+`openrouter-component.yml` for the pinned SHA. It checks the latest matching run's
+SHA, branch, event, status, and conclusion. Missing, pending, failed, cancelled,
+or malformed results and API errors stop publication. `GITHUB_TOKEN` has only
+`contents: read` and `actions: read`; tagging and Central use separate credentials.
 
 ### Portal account and token
 
@@ -148,7 +171,7 @@ Before changing shared settings, agree on the protection configuration with the
 repository owner. Proposed configuration: environment `maven-central`, selected
 **branch** `main` only (no tag deployment rule), required trusted reviewer, and
 administrator bypass disabled where available. The workflow is dispatched from
-`main` and subsequently checks out the tag. Prevent self-review only when another
+`main` and checks out the pinned dispatch SHA. Prevent self-review only when another
 trusted reviewer is available; a solo maintainer cannot approve their own run
 with that option enabled. Main-branch and release-tag rules require separate
 approval and should prevent unreviewed workflow changes and tag movement.
@@ -172,7 +195,7 @@ Available protection choices (none is selected automatically):
 
 A local, owner-operated release or an independently gated secret manager could
 be designed separately if requested; neither is silently substituted for the
-requested GitHub approval gate. Manual dispatch, a SHA input, and passing CI are
+requested GitHub approval gate. Manual dispatch and passing CI are
 not human approval protection. Do not dispatch even as a setup test: GitHub can
 create a missing environment without any protection rules. Verify the configured
 reviewer gate, main-only branch policy, and bypass settings before adding secrets.
@@ -218,13 +241,14 @@ No preparation push authorizes creating a release tag or dispatching publication
 ### Enter environment secrets locally
 
 Once the protected environment exists, use repository Settings → Environments →
-`maven-central` → Environment secrets. Enter the four values directly there, or
+`maven-central` → Environment secrets. Enter the five values directly there, or
 run the following in your own terminal (interactive input is hidden):
 
 ```shell
 gh secret set CENTRAL_USERNAME --repo maxsumrall/jev4j --env maven-central
 gh secret set CENTRAL_PASSWORD --repo maxsumrall/jev4j --env maven-central
 gh secret set MAVEN_GPG_PASSPHRASE --repo maxsumrall/jev4j --env maven-central
+gh secret set RELEASE_TAG_TOKEN --repo maxsumrall/jev4j --env maven-central
 ```
 
 For the key, use a local pipeline so the armored private key is not printed or
@@ -251,7 +275,7 @@ signing. GitHub does not return stored secret values.
 
 ### Non-publishing validation and approval record
 
-After the license and release versions are committed, run the unsigned release
+After preparing release POMs in a disposable checkout, run the unsigned release
 commands above. For a real local signing check, run the following in your own
 Bash terminal with the selected key and an interactive hidden passphrase prompt.
 The subshell removes the environment variables when it exits. Do not use Maven
@@ -275,45 +299,47 @@ uses POM packaging and does not need source/Javadoc JARs. The Central plugin
 creates bundle checksums at deployment; local `verify` does not exercise upload,
 server-side validation, credential validity, or publication. Do not run `deploy`
 as a dry run. Even manual-mode Central validation requires an upload and separate
-approval in this first-release process.
+approval.
 
 Before approval, record:
 
 - Chosen license text and resolved POM license name/URL; inherited developer,
   description, project URL, SCM connection and release tag in effective POMs.
-- Coordinated root/module-parent versions, standalone example/test versions and
-  dependencies, and README coordinates across all READMEs. No SNAPSHOT release.
+- Coordinated generated root/module-parent versions and standalone example/test
+  dependencies. No SNAPSHOT in published coordinates.
 - Exactly three coordinates: parent POM, core, optional-to-consumers starter.
   Examples and consumer tests stay outside the reactor with deployment disabled.
 - Source/Javadoc content, signatures, public fingerprint retrieval, key/token
   expiry, successful unsigned and signed checks, and secret names/protection.
-- Full release commit SHA, `vX.Y.Z` SCM tag, clean working tree, successful CI
+- Full source commit SHA, intended `vYYYY.M.N` SCM tag, successful CI
   including Java 17/21/25 consumer checks and live component checks on that SHA.
-- Explicit owner approval of **version and commit** before pushing the annotated
-  release tag or dispatching the publishing workflow.
+- Explicit owner approval of **version and commit** at the environment gate
+  before CI creates the annotated tag or publishes.
 
-After that approval, the dispatch command is:
+For example, dispatch with:
 
 ```shell
 gh workflow run release.yml --repo maxsumrall/jev4j --ref main \
-  -f tag=vX.Y.Z -f commit=APPROVED_FULL_COMMIT_SHA
+  -f version=2026.9.1
 ```
 
 The environment approval releases the job. Its `./mvnw -Prelease deploy` invokes
 Central with `autoPublish=true` and `waitUntil=published`: upload, validation,
-and irreversible publication are one operation. Do not approve until tag and SHA
+and irreversible publication are one operation. Do not approve until version and SHA
 match the approval record.
 
 ### Ambiguous timeout recovery
 
-Do not rerun a timed-out publishing job automatically. Retain the deployment ID
+Do not rerun a timed-out publishing job. The workflow rejects reruns and reserved
+versions. If a run failed before reserving a tag or uploading, fix the problem and
+start a new dispatch. Once a tag exists, leave it in place even if signing or
+publication failed; choose a new version for a future release. Retain the deployment ID
 and inspect the Central Portal deployment and all three coordinates first. A
 `PUBLISHING` deployment needs time; `PUBLISHED` must never be uploaded again.
 A `VALIDATED` manual deployment may need explicit Portal publication approval;
 `FAILED` requires inspecting validation errors. For an unresolved upload with no
-clear deployment record, contact Central support before retrying. Only retry an
-unpublished version after confirming the prior deployment cannot still publish
-and resolving/deleting that deployment as appropriate. Central versions are
+clear deployment record, contact Central support before further publication.
+Resolve the existing deployment before starting another release. Central versions are
 immutable; published mistakes require a new version, never retagging/replacing.
 
 References: [Central namespace verification](https://central.sonatype.org/register/namespace/),

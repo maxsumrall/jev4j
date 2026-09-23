@@ -1,7 +1,7 @@
 # Spring Boot supermarket support triage
 
 A copyable Java 17 / Spring Boot 4 REST example using
-`io.github.maxsumrall.jev4j:jev4j-spring-boot-starter:0.1.1-SNAPSHOT`. It is a standalone Maven
+`io.github.maxsumrall.jev4j:jev4j-spring-boot-starter:0.0.0-SNAPSHOT`. It is a standalone Maven
 project: it has no repository parent and is not a root reactor module.
 
 The default `offline` profile makes no network calls and needs no API key. It returns clearly

@@ -1,14 +1,11 @@
 name: Publish to Maven Central
+run-name: Release ${{ inputs.version }} from ${{ github.sha }}
 
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Existing release tag, e.g. v0.1.0 (publishing is irreversible)'
-        required: true
-        type: string
-      commit:
-        description: Approved full 40-character release commit SHA
+      version:
+        description: 'CalVer YYYY.M.N, e.g. 2026.9.1 (publishing is irreversible)'
         required: true
         type: string
 
@@ -26,54 +23,45 @@ jobs:
     environment: maven-central
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_TAG: v${{ inputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate and check out release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-          RELEASE_COMMIT: ${{ inputs.commit }}
+      - name: Prepare release versions in this checkout only
         run: |
           set -euo pipefail
-          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-             ! [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Expected a vX.Y.Z tag and a full lowercase 40-character commit SHA." >&2
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "Do not rerun a release. Inspect Central and the reserved tag first." >&2
             exit 1
           fi
-          tag_commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
-          test "$tag_commit" = "$RELEASE_COMMIT"
-          git merge-base --is-ancestor "refs/tags/$RELEASE_TAG^{commit}" origin/main
-          git checkout --detach "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main
           test -s LICENSE
-          export RELEASE_VERSION="${RELEASE_TAG#v}"
-          python3 - <<'PY'
-          import os
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
-          version = os.environ['RELEASE_VERSION']
-          project = ET.parse('pom.xml').getroot()
-          assert project.findtext('m:scm/m:tag', namespaces=ns) == os.environ['RELEASE_TAG'], 'SCM tag must match release tag'
-          for path in Path('.').rglob('pom.xml'):
-              if 'target' in path.parts:
-                  continue
-              root = ET.parse(path).getroot()
-              own = root.find('m:version', ns)
-              if own is not None:
-                  assert own.text == version, f'{path}: expected version {version}'
-              for dep in root.findall('m:parent', ns) + root.findall('m:dependencies/m:dependency', ns):
-                  if dep.findtext('m:groupId', namespaces=ns) == 'io.github.maxsumrall.jev4j':
-                      actual = dep.findtext('m:version', namespaces=ns)
-                      assert actual in (version, '${project.version}'), f'{path}: stale library version {actual}'
-          PY
+          python3 .github/release-version.py "$RELEASE_VERSION"
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "Version already reserved. Inspect its previous publication; choose a new version." >&2
+            exit 1
+          fi
+          for artifact in jev4j-parent jev4j-core jev4j-spring-boot-starter; do
+            url="https://repo.maven.apache.org/maven2/io/github/maxsumrall/jev4j/$artifact/$RELEASE_VERSION/$artifact-$RELEASE_VERSION.pom"
+            status="$(curl --silent --show-error --location --max-time 30 --output /dev/null --write-out '%{http_code}' "$url")"
+            if [ "$status" != 404 ]; then
+              echo "Central preflight for $artifact returned $status; expected 404. Stopping." >&2
+              exit 1
+            fi
+          done
+          echo "Release $RELEASE_VERSION from $RELEASE_COMMIT" >> "$GITHUB_STEP_SUMMARY"
       - name: Require successful CI for the approved commit
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
           for workflow in ci.yml openrouter-component.yml; do
@@ -100,17 +88,33 @@ jobs:
           server-password: CENTRAL_PASSWORD
       - name: Build and test the release artifacts
         run: |
-          ./mvnw --batch-mode --no-transfer-progress clean install
+          timestamp="$(git show -s --format=%ct HEAD)"
+          ./mvnw --batch-mode --no-transfer-progress -Prelease -Dgpg.skip=true clean install \
+            -Dproject.build.outputTimestamp="$timestamp"
           ./mvnw --batch-mode --no-transfer-progress -f consumer-tests/pom.xml verify
           ./mvnw --batch-mode --no-transfer-progress -f examples/plain-java/pom.xml verify exec:java
           ./mvnw --batch-mode --no-transfer-progress -f examples/spring-boot-triage/pom.xml verify
+      - name: Reserve annotated source tag before any Central upload
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || { echo "Missing RELEASE_TAG_TOKEN environment secret" >&2; exit 1; }
+          tag_object="$(jq -n --arg tag "$RELEASE_TAG" --arg sha "$RELEASE_COMMIT" \
+            --arg message "Release $RELEASE_VERSION; CI substitutes POM versions. Run $GITHUB_RUN_ID." \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{tag: $tag, message: $message, object: $sha, type: "commit", tagger: {name: "Max Sumrall", email: "jmsumrall@gmail.com", date: $date}}' |
+            gh api --method POST "repos/$GH_REPO/git/tags" --input - --jq .sha)"
+          jq -n --arg ref "refs/tags/$RELEASE_TAG" --arg sha "$tag_object" '{ref: $ref, sha: $sha}' |
+            gh api --method POST "repos/$GH_REPO/git/refs" --input -
+          echo "Reserved $RELEASE_TAG. Never reuse this version, even if publication fails." >> "$GITHUB_STEP_SUMMARY"
       - name: Sign and publish libraries
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
           MAVEN_GPG_KEY: ${{ secrets.MAVEN_GPG_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           for name in CENTRAL_USERNAME CENTRAL_PASSWORD MAVEN_GPG_KEY MAVEN_GPG_PASSPHRASE; do
