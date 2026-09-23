@@ -8,7 +8,7 @@ of your own enum constants in a `switch`, or a point on a scale you define.
 
 <!-- java: body -->
 ```java
-var isRefundRequest = Jev.noul("Is this a refund request?");
+Jev.NoulQuestion isRefundRequest = Jev.noul("Is this a refund request?");
 
 if (jev.test("I want my money back!", isRefundRequest)) {
     System.out.println("Start the refund workflow");
@@ -236,8 +236,9 @@ failure into `false`, `OTHER`, or an empty result.
 
 ### Several questions in one request
 
-When you have two to eight questions about the same input, send them together and map the typed
-answers straight into a record:
+When you have two to eight questions about the same input, send them together. Two questions
+return an `Evaluation2` with a type parameter for each answer. Read the typed answers or map them
+into your own record:
 
 <!-- java: members -->
 ```java
@@ -246,14 +247,17 @@ record RoutingDecision(NoulAnswer refund, ChoiceAnswer<Department> department) {
 
 <!-- java: body -->
 ```java
-RoutingDecision routing =
-        jev.evaluate("Please refund this order.", refundRequested, department)
-                .map(RoutingDecision::new);
+JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>> answers =
+        jev.evaluate("Please refund this order.", refundRequested, department);
+
+NoulAnswer refundAnswer = answers.answer1();
+ChoiceAnswer<Department> departmentAnswer = answers.answer2();
+RoutingDecision routing = answers.map(RoutingDecision::new);
 ```
 
-You can also read the answers one at a time with `answer1()` through `answerN()`, in the order you
-asked. The questions share one set of request metadata, and `map` runs locally. Check each
-answer's acceptance on its own before you act on it.
+Three questions return `Evaluation3<A1, A2, A3>`, and so on through `Evaluation8`. Each result
+exposes `answer1()` through `answerN()` in question order, with one set of request metadata.
+`map` runs locally. Check each answer's acceptance on its own before you act on it.
 
 ### Structured input
 
