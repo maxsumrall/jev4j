@@ -33,18 +33,12 @@ returns `true` when the probability of yes is at least `0.5`. Override the cutof
 - TypeSafe and OpenRouter through the JDK HTTP client; Jackson 3 stays internal.
 - Optional Spring Boot 4 starter. No Spring dependency in core.
 
-**Early development.** Requires Java 17; the API may change. The first release is `0.1.0`. Until it is published to Maven Central, install it
-from source using the instructions below.
+**Early development.** Requires Java 17; the API may change. Version `0.1.0` is
+available from Maven Central.
 
 ## Get started
 
-Use JDK 17 to build the repository. The Maven Wrapper downloads Maven for you:
-
-```shell
-./mvnw clean install
-```
-
-Then add the core library to your application:
+Add the core library to your application. No custom Maven repository is needed:
 
 ```xml
 <dependency>

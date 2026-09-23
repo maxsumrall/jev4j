@@ -5,7 +5,7 @@
   <parent>
     <groupId>io.github.maxsumrall.jev4j</groupId>
     <artifactId>jev4j-parent</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1-SNAPSHOT</version>
   </parent>
   <artifactId>jev4j-spring-boot-starter</artifactId>
   <name>jev4j Spring Boot starter</name>
@@ -14,7 +14,7 @@
     <connection>scm:git:https://github.com/maxsumrall/jev4j.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/maxsumrall/jev4j.git</developerConnection>
     <url>https://github.com/maxsumrall/jev4j</url>
-    <tag>v0.1.0</tag>
+    <tag>HEAD</tag>
   </scm>
   <dependencies>
     <dependency>
