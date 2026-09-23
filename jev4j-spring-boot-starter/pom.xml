@@ -8,6 +8,14 @@
     <version>0.1.0</version>
   </parent>
   <artifactId>jev4j-spring-boot-starter</artifactId>
+  <name>jev4j Spring Boot starter</name>
+  <url>https://github.com/maxsumrall/jev4j</url>
+  <scm>
+    <connection>scm:git:https://github.com/maxsumrall/jev4j.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/maxsumrall/jev4j.git</developerConnection>
+    <url>https://github.com/maxsumrall/jev4j</url>
+    <tag>v0.1.0</tag>
+  </scm>
   <dependencies>
     <dependency>
       <groupId>com.google.errorprone</groupId>

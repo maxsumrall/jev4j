@@ -39,7 +39,7 @@ permissions and does not use a shared Maven cache.
 
 1. Change the root version, module parent versions, and standalone test/example
    versions and library dependencies from `0.1.0-SNAPSHOT` to the release version,
-   for example `0.1.0`. Set the root POM's SCM tag to `v0.1.0`. Update README
+   for example `0.1.0`. Set the parent and both library POMs' SCM tags to `v0.1.0`. Update README
    installation instructions to the release coordinates.
 2. Run the normal CI checks and inspect the unsigned release artifacts locally:
 
