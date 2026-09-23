@@ -118,7 +118,7 @@ public final class JevEvaluator {
         result.requestId());
   }
 
-  private Evaluation<List<Object>> exchange(
+  private HttpRequest request(
       List<Prepared<?>> preparedQuestions, Jev.State state, String firstKey) {
     Objects.requireNonNull(state, "state");
     ObjectNode root = JSON.createObjectNode();
@@ -129,13 +129,17 @@ public final class JevEvaluator {
       String key = preparedQuestions.size() == 1 ? firstKey : "question" + (i + 1);
       questions.set(key, preparedQuestions.get(i).node());
     }
-    HttpRequest request =
-        HttpRequest.newBuilder(endpoint)
-            .timeout(timeout)
-            .header("Authorization", "Bearer " + apiKey)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(root)))
-            .build();
+    return HttpRequest.newBuilder(endpoint)
+        .timeout(timeout)
+        .header("Authorization", "Bearer " + apiKey)
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(root)))
+        .build();
+  }
+
+  private Evaluation<List<Object>> exchange(
+      List<Prepared<?>> preparedQuestions, Jev.State state, String firstKey) {
+    HttpRequest request = request(preparedQuestions, state, firstKey);
     HttpResponse<String> response;
     try {
       response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -156,6 +160,11 @@ public final class JevEvaluator {
       throw new JevEvaluationException(
           "evaluation request failed", FailureCategory.IO, OptionalInt.empty(), Optional.empty());
     }
+    return decode(preparedQuestions, firstKey, response);
+  }
+
+  private Evaluation<List<Object>> decode(
+      List<Prepared<?>> preparedQuestions, String firstKey, HttpResponse<String> response) {
     Optional<String> requestId =
         response.headers().firstValue("x-typesafe-request-id").filter(value -> !value.isBlank());
     if (response.statusCode() < 200 || response.statusCode() >= 300)
