@@ -1,7 +1,7 @@
 # jev4j
 
-**Typed Jev decisions for Java.** Ask a yes/no question, select an enum, or score an ordered
-rubric. Keep the probabilities and decide in Java when to act.
+A Java client for [Jev](https://docs.typesafe.ai/introduction), TypeSafe's structured decision model.
+Evaluate text as a yes/no probability, an enum choice, or a score against ordered levels.
 
 [![CI](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml)
 [![OpenRouter component tests](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml)
@@ -12,8 +12,8 @@ rubric. Keep the probabilities and decide in Java when to act.
 - TypeSafe and OpenRouter through the JDK HTTP client; Jackson 3 stays internal.
 - Optional Spring Boot 4 starter. No Spring dependency in core.
 
-**Status:** early development, Java 17 baseline. The API may change. Artifacts are not yet
-published to Maven Central; install from source to use the snapshot.
+**Early development.** Requires Java 17; the API may change. Install the snapshot from source
+until Maven Central releases are available.
 
 ## Get started
 
@@ -39,24 +39,25 @@ Create an evaluator using your OpenRouter key from the environment:
 import io.github.maxsumrall.jev4j.Jev;
 import io.github.maxsumrall.jev4j.JevEvaluator;
 
-var evaluator = JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
+JevEvaluator evaluator = JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
     .openRouter()
     .model("jev-latest")
     .build();
 
-var refundRequested = Jev.noul("Is the customer asking for money back?")
+Jev.ThresholdNoulQuestion refundRequested = Jev.noul("Is the customer asking for money back?")
     .describe(true, "Requests a refund or reversal of a charge")
     .describe(false, "Does not request money back")
     .threshold(0.8);
 
-var answer = evaluator.evaluate(refundRequested, "Please refund the duplicate charge.");
+Jev.ThresholdNoulAnswer answer =
+    evaluator.evaluate(refundRequested, "Please refund the duplicate charge.");
 System.out.println(answer.isTrue());
 System.out.println(answer.probabilityTrue());
 ```
 
-The Java snippets below use these imports and evaluator. Each `evaluate(...)` call makes one
-provider request and may incur charges. Use `.typeSafe()` with a TypeSafe key for the direct
-provider; TypeSafe is the default when neither preset is supplied.
+The following snippets reuse these imports and evaluator. Each `evaluate(...)` call makes one
+provider request and may incur charges. To call TypeSafe instead, use a TypeSafe key and
+`.typeSafe()` (the default provider).
 
 ## Noul: a probability of yes
 
@@ -70,7 +71,7 @@ answer.isTrueAt(0.95);  // an override for this check only
 Neither check makes another request or mutates the answer. A question without `.threshold(...)`
 returns a probability-only answer with `isTrueAt(...)`, but no `isTrue()` method.
 
-**Below the yes threshold does not mean confidently no.** Use a review region when needed:
+A probability below the yes threshold may still be uncertain. Reserve a range for review:
 
 ```java
 double p = answer.probabilityTrue();
@@ -79,40 +80,75 @@ String decision = p >= 0.9 ? "YES" : p <= 0.1 ? "NO" : "REVIEW";
 
 ## Choice: route with an enum switch
 
-Every enum constant is an allowed option. `.describe(...)` explains an option; it does not add
-or remove options.
+Define the allowed options with an enum. Implement `Jev.Described` to keep descriptions with
+the constants:
 
 ```java
-enum Department { BILLING, DELIVERY, OTHER }
+enum Department implements Jev.Described {
+  BILLING("Charges, payments, and refunds"),
+  DELIVERY("Late, missing, or damaged deliveries"),
+  OTHER("Anything else");
 
-var department = Jev.choice(Department.class, "Which team should handle this message?")
-    .describe(Department.BILLING, "Charges, payments, and refunds")
-    .describe(Department.DELIVERY, "Late, missing, or damaged deliveries")
-    .describe(Department.OTHER, "Anything else")
+  private final String description;
+
+  Department(String description) {
+    this.description = description;
+  }
+
+  @Override
+  public String description() {
+    return description;
+  }
+}
+
+Jev.ChoiceQuestion<Department> department =
+    Jev.choice(Department.class, "Which team should handle this message?")
     .minConfidence(0.85);
 
-var classification = evaluator.evaluate(department, "My groceries never arrived.");
+Jev.ChoiceAnswer<Department> classification =
+    evaluator.evaluate(department, "My groceries never arrived.");
+```
 
-String queue = classification.acceptedValue()
-    .map(value -> switch (value) {
+Add this routing method to your application class:
+
+```java
+String queue(Jev.ChoiceAnswer<Department> answer) {
+  if (!answer.meetsThresholds()) {
+    return "manual-review";
+  }
+  return switch (answer.value()) {
       case BILLING -> "billing-support";
       case DELIVERY -> "delivery-support";
       case OTHER -> "general-support";
-    })
-    .orElse("manual-review");
+  };
+}
 ```
 
 `value()` retains the selected enum even when it fails acceptance checks. `probabilities()`
 returns an immutable map keyed by the enum; `confidence()` retains Jev's reported statistic.
 An empty `acceptedValue()` means a local threshold failed, not a provider error.
 
-You can put reusable descriptions on enums by implementing `Jev.Described.description()`.
-Plain enums need no library interface. Wire labels use `Enum.name()`, not `toString()`.
+Choice and Score probability distributions must contain every declared option and total 1 within
+an absolute tolerance of `1e-6`. This allows small floating-point or decimal-rounding differences;
+jev4j rejects totals outside it rather than normalizing or recomputing scores or confidence.
 
-## Score: ordered levels with an explicit enum conversion
+For an existing enum, supply descriptions on the question instead:
 
-Implement the optional `Jev.ScoreLevel` interface to keep descriptions with your enum. Declaration
-order defines levels from lowest to highest, starting at zero; reordering changes the rubric.
+```java
+enum PlainDepartment { BILLING, DELIVERY, OTHER }
+
+Jev.ChoiceQuestion<PlainDepartment> plainDepartment =
+    Jev.choice(PlainDepartment.class, "Route it")
+        .describe(PlainDepartment.BILLING, "Payments");
+```
+
+All constants remain allowed, including those without a description. `.describe(...)` changes
+only the description. Wire labels use `Enum.name()`, not `toString()`.
+
+## Score: rate against ordered levels
+
+Implement `Jev.ScoreLevel` to describe each level. Declare constants from lowest to highest;
+their positions define scores starting at zero. Reordering the enum changes the rubric.
 
 ```java
 enum Frustration implements Jev.ScoreLevel {
@@ -132,9 +168,11 @@ enum Frustration implements Jev.ScoreLevel {
   }
 }
 
-var frustration = Jev.score(Frustration.class, "How frustrated is the customer?")
+Jev.EnumScoreQuestion<Frustration> frustration =
+    Jev.score(Frustration.class, "How frustrated is the customer?")
     .minConfidence(0.85);
-var rating = evaluator.evaluate(frustration, "This is the third failed delivery!");
+Jev.EnumScoreAnswer<Frustration> rating =
+    evaluator.evaluate(frustration, "This is the third failed delivery!");
 
 String priority = !rating.meetsThresholds() ? "review" : switch (rating.nearestLevel()) {
   case CALM -> "normal";
@@ -143,14 +181,13 @@ String priority = !rating.meetsThresholds() ? "review" : switch (rating.nearestL
 };
 ```
 
-**A Score can be fractional.** `value()` and `acceptedValue()` preserve the raw score, such as
-1.6. `nearestLevel()` rounds to the closest enum level, with exact midpoints rounding upward.
-That is a local conversion, not a category selected by Jev.
+Jev returns a fractional score, such as 1.6. Read it through `value()` or `acceptedValue()`.
+Use `nearestLevel()` to round it to an enum locally; exact midpoints round upward.
 
 For a rubric without an enum:
 
 ```java
-var quality = Jev.score("How useful is this response?")
+Jev.ScoreQuestion quality = Jev.score("How useful is this response?")
     .level("Unhelpful")
     .level("Partly useful")
     .level("Useful and complete")
@@ -168,9 +205,9 @@ Score rubrics require 2–10 levels. Choice supports up to 255 enum constants.
 | Choice | `.minProbability(0.9)` | Accept when the selected option's probability ≥ 0.9 |
 | Score | `.minConfidence(0.85)` | Accept the rating when Jev confidence ≥ 0.85 |
 
-All comparisons are inclusive. If both Choice minimums are configured, both must pass. Choice
-and Score have no acceptance filter by default. Confidence and selected-option probability are
-different quantities; neither should be interpreted as a guarantee of correctness.
+Comparisons include equality. Both Choice minimums must pass when configured. Choice and Score
+have no acceptance filter by default. Confidence differs from selected-option probability;
+neither guarantees correctness.
 
 Thresholds never enter the provider request. Fluent methods return new immutable definitions;
 keep their return values. Low confidence never becomes `OTHER`, and transport failures never
@@ -178,30 +215,33 @@ become `false` or an empty accepted result.
 
 ## HTTP configuration and metadata
 
-The evaluator and builder are immutable and reusable. Configure a model, request timeout, base
-URI, or your application's JDK `HttpClient` for proxy/TLS settings:
+Reuse an evaluator across requests. Configure its model, base URI, or timeout, or supply your
+application's JDK `HttpClient` for proxy and TLS settings:
 
 ```java
-var configured = JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
+JevEvaluator configured = JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
     .openRouter()
     .timeout(java.time.Duration.ofSeconds(15))
     .httpClient(java.net.http.HttpClient.newHttpClient())
     .build();
 
-var evaluation = configured.evaluateWithMetadata(refundRequested, "Please refund this order.");
-var result = evaluation.answer();
-var servingModel = evaluation.model();
-var tokens = evaluation.usage().inputTokens();
-var optionalCost = evaluation.usage().cost();
+JevEvaluator.Evaluation<Jev.ThresholdNoulAnswer> evaluation =
+    configured.evaluateWithMetadata(refundRequested, "Please refund this order.");
+Jev.ThresholdNoulAnswer result = evaluation.answer();
+String servingModel = evaluation.model();
+long tokens = evaluation.usage().inputTokens();
+java.util.OptionalDouble optionalCost = evaluation.usage().cost();
 ```
 
 Both presets call `/v1/systemone`; OpenRouter uses the base URI `https://openrouter.ai/api`.
 Use a Jev model, not a chat-completions model. The evaluator does not retry requests or close a
 caller-supplied HTTP client. HTTP, network, and malformed-response failures raise
-`JevEvaluationException`; error messages omit provider response bodies.
+`JevEvaluationException`; `httpStatusCode()` contains the numeric status only for HTTP failures.
+Error messages omit provider response bodies. API keys must use bearer-token-safe characters and
+are neither trimmed nor included in validation errors or their cause chains.
 
-Current scope is synchronous evaluation of **one question with String state per request**.
-Structured state, batching, streaming, and automatic retries are not implemented.
+Evaluation is synchronous, with **one question and String state per request**. Structured state,
+batching, streaming, and automatic retries are not supported yet.
 
 ## Spring Boot
 
@@ -228,8 +268,8 @@ auto-configured one; that path requires no `jev.api-key`. See the
 
 ## Runnable, copyable examples
 
-Examples are standalone Maven projects, outside the library reactor. They do not ship in library
-JARs or become transitive dependencies. Both default to clearly labeled synthetic offline data.
+Build or copy the examples as standalone Maven projects. They stay outside the library artifacts
+and dependency graph. Both run offline with labeled synthetic data by default.
 
 | Example | Demonstrates |
 | --- | --- |
@@ -239,25 +279,32 @@ JARs or become transitive dependencies. Both default to clearly labeled syntheti
 After `./mvnw clean install`:
 
 ```shell
+./mvnw -f consumer-tests/pom.xml verify
 ./mvnw -f examples/plain-java/pom.xml verify exec:java
 ./mvnw -f examples/spring-boot-triage/pom.xml verify
 ```
 
-Follow each example's README to run or copy it outside this repository. For local fixtures in your
-own tests, `question.answer(...)` constructs immutable answer data without a network call:
+Each example's README includes run and copy instructions. Use `question.answer(...)` to construct
+local test fixtures without a network call:
 
 ```java
-var synthetic = refundRequested.answer(0.84);
+Jev.ThresholdNoulAnswer synthetic = refundRequested.answer(0.84);
 assert synthetic.isTrue();
 assert !synthetic.isTrueAt(0.95);
 ```
 
 ## Testing and CI
 
-[Offline CI](.github/workflows/ci.yml) runs on pushes and pull requests. It builds on Java 17
-with Error Prone, Picnic checks, NullAway, formatting checks, and unit/component tests. It builds
-both examples independently. Compatibility jobs compile on Java 17, then run core and starter
-tests on Java 21 and 25 without recompiling against newer javac internals.
+[Offline CI](.github/workflows/ci.yml) runs on pushes and pull requests. The standalone
+`consumer-tests` project exercises installed artifacts through public APIs and a real local HTTP
+server, using structural golden JSON fixtures and compile-time generic contracts. That suite also
+checks credential redaction and transport failures. Focused core tests retain numeric boundaries,
+defensive-copy behavior, and construction invariants.
+The Spring example tests real random-port HTTP endpoints in offline and local-provider modes.
+Small Spring context tests cover bean replacement and missing credentials without inspecting
+private fields. Compatibility jobs compile the consumer and Spring application suites on Java 17,
+then run their bytecode on Java 21 and 25. Error Prone/Picnic, NullAway, and formatting checks
+remain part of the build.
 
 [OpenRouter component tests](.github/workflows/openrouter-component.yml) run on pushes to `main`
 and support manual runs on `main`. They use the repository's `OPENROUTER_API_KEY` Actions secret
@@ -274,8 +321,8 @@ To opt in locally, set `OPENROUTER_API_KEY` in your environment, then run:
 This incurs provider charges. Missing credentials fail the explicit live run. The Spring example's
 `LiveProfileIntegrationTest` uses a **local mock provider**, not OpenRouter.
 
-Maven Central releases are a later step. No publishing workflow exists, and example projects
-disable deployment.
+Publishing remains separate from CI. There is no release workflow; example projects disable
+deployment.
 
 ## Upstream documentation
 

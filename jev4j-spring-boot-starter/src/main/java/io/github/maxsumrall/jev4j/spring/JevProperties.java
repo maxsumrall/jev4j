@@ -21,10 +21,17 @@ public record JevProperties(
     @Nullable URI baseUri,
     String model,
     Duration timeout) {
-  public JevProperties {
-    provider = provider == null ? Provider.TYPESAFE : provider;
-    model = model == null ? "jev-latest" : model;
-    timeout = timeout == null ? Duration.ofSeconds(30) : timeout;
+  public JevProperties(
+      @Nullable String apiKey,
+      Provider provider,
+      @Nullable URI baseUri,
+      String model,
+      Duration timeout) {
+    this.apiKey = apiKey;
+    this.provider = provider == null ? Provider.TYPESAFE : provider;
+    this.baseUri = baseUri;
+    this.model = model == null ? "jev-latest" : model;
+    this.timeout = timeout == null ? Duration.ofSeconds(30) : timeout;
   }
 
   @Override

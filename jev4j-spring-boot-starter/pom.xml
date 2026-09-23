@@ -10,6 +10,12 @@
   <artifactId>jev4j-spring-boot-starter</artifactId>
   <dependencies>
     <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
+      <version>${error-prone.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
       <groupId>io.github.maxsumrall.jev4j</groupId>
       <artifactId>jev4j-core</artifactId>
       <version>${project.version}</version>

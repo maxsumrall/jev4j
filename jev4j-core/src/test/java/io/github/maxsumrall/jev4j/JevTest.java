@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.errorprone.annotations.Var;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -44,10 +45,6 @@ final class JevTest {
     }
   }
 
-  private enum Other {
-    UNKNOWN
-  }
-
   @Test
   void noulTypesAndInclusiveThresholdAreExecutableContracts() {
     Jev.NoulQuestion plainQuestion = Jev.noul("rain").describe(true, "It rains");
@@ -71,8 +68,8 @@ final class JevTest {
 
   @Test
   void derivedQuestionsDoNotMutateOriginals() {
-    var original = Jev.choice(Weather.class, "weather");
-    var configured =
+    Jev.ChoiceQuestion<Weather> original = Jev.choice(Weather.class, "weather");
+    Jev.ChoiceQuestion<Weather> configured =
         original.describe(Weather.SUN, "clear sky").minConfidence(0.8).minProbability(0.7);
 
     assertEquals("sunny", original.descriptions().get(Weather.SUN));
@@ -86,11 +83,12 @@ final class JevTest {
 
   @Test
   void choiceCopiesAsymmetricDistributionAndAppliesBothPoliciesInclusively() {
-    var probabilities = new EnumMap<Weather, Double>(Weather.class);
+    Map<Weather, Double> probabilities = new EnumMap<>(Weather.class);
     probabilities.put(Weather.SUN, 0.8);
     probabilities.put(Weather.RAIN, 0.2);
-    var question = Jev.choice(Weather.class, "weather").minConfidence(0.7).minProbability(0.8);
-    var accepted = question.answer(Weather.SUN, probabilities, 0.7);
+    Jev.ChoiceQuestion<Weather> question =
+        Jev.choice(Weather.class, "weather").minConfidence(0.7).minProbability(0.8);
+    Jev.ChoiceAnswer<Weather> accepted = question.answer(Weather.SUN, probabilities, 0.7);
 
     probabilities.put(Weather.SUN, 0.1);
     assertEquals(0.8, accepted.probabilities().get(Weather.SUN));
@@ -113,7 +111,7 @@ final class JevTest {
   }
 
   @Test
-  void invalidOrUnsupportedAnswerDataFails() throws ReflectiveOperationException {
+  void invalidAnswerDataFails() {
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -130,37 +128,42 @@ final class JevTest {
         IllegalArgumentException.class, () -> new Jev.NoulQuestion("x", Map.of(true, " ")));
     assertThrows(
         IllegalArgumentException.class, () -> new Jev.ScoreQuestion("x", List.of("low", " "), 0));
+  }
 
-    // Generic callers cannot express this mismatch; reflection verifies the DTO boundary also
-    // rejects it.
-    var constructor =
-        Jev.ChoiceAnswer.class.getConstructor(
-            Class.class, Enum.class, Map.class, double.class, double.class, double.class);
-    var failure =
-        assertThrows(
-            java.lang.reflect.InvocationTargetException.class,
-            () ->
-                constructor.newInstance(
-                    Weather.class,
-                    Other.UNKNOWN,
-                    Map.of(Weather.SUN, 0.5, Weather.RAIN, 0.5),
-                    1,
-                    0,
-                    0));
-    assertTrue(failure.getCause() instanceof IllegalArgumentException);
+  @Test
+  void distributionsRequireApproximatelyUnitTotalsAtTheDtoBoundary() {
+    Jev.ChoiceQuestion<Weather> choice = Jev.choice(Weather.class, "weather");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> choice.answer(Weather.SUN, Map.of(Weather.SUN, 0.0, Weather.RAIN, 0.0), 1));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> choice.answer(Weather.SUN, Map.of(Weather.SUN, 0.7, Weather.RAIN, 0.300002), 1));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> choice.answer(Weather.SUN, Map.of(Weather.SUN, 0.7, Weather.RAIN, 0.299998), 1));
+    choice.answer(Weather.SUN, Map.of(Weather.SUN, 0.7000006, Weather.RAIN, 0.3), 1);
+    choice.answer(Weather.SUN, Map.of(Weather.SUN, 0.6999994, Weather.RAIN, 0.3), 1);
+
+    Jev.ScoreQuestion score = Jev.score("score").level("low").level("high").build();
+    assertThrows(IllegalArgumentException.class, () -> score.answer(0, List.of(0.0, 0.0), 1));
+    assertThrows(IllegalArgumentException.class, () -> score.answer(0, List.of(0.4, 0.600002), 1));
+    assertThrows(IllegalArgumentException.class, () -> score.answer(0, List.of(0.4, 0.599998), 1));
+    score.answer(0, List.of(0.4000006, 0.6), 1);
+    score.answer(0, List.of(0.3999994, 0.6), 1);
   }
 
   @Test
   void enumScoreUsesOrderAndRoundsExactMidpointUp() {
-    var probabilities = Map.of(Size.SMALL, 0.1, Size.MEDIUM, 0.7, Size.LARGE, 0.2);
-    var question = Jev.score(Size.class, "size").minConfidence(0.8);
+    Map<Size, Double> probabilities = Map.of(Size.SMALL, 0.1, Size.MEDIUM, 0.7, Size.LARGE, 0.2);
+    Jev.EnumScoreQuestion<Size> question = Jev.score(Size.class, "size").minConfidence(0.8);
 
     assertEquals(Size.MEDIUM, question.answer(0.5, probabilities, 0.8).nearestLevel());
     assertEquals(Size.LARGE, question.answer(1.5, probabilities, 0.8).nearestLevel());
     assertEquals(Size.MEDIUM, question.answer(1.49, probabilities, 0.8).nearestLevel());
     // At this DTO boundary, the raw score is independent data and is not cross-checked against
     // the probability distribution's mean.
-    var fractional = question.answer(1.2, probabilities, 0.8);
+    Jev.EnumScoreAnswer<Size> fractional = question.answer(1.2, probabilities, 0.8);
     assertEquals(1.2, fractional.acceptedValue().orElseThrow());
     String result =
         switch (fractional.nearestLevel()) {
@@ -177,14 +180,14 @@ final class JevTest {
 
   @Test
   void plainScoreBuilderIsImmutableAndEnforcesLimits() {
-    var one = Jev.score("quality").level("bad");
-    var two = one.level("good");
+    Jev.ScoreBuilder one = Jev.score("quality").level("bad");
+    Jev.ScoreBuilder two = one.level("good");
     assertEquals(1, one.levels().size());
     assertThrows(IllegalArgumentException.class, one::build);
 
-    var question = two.build().minConfidence(0.5);
-    var source = new java.util.ArrayList<>(List.of(0.2, 0.8));
-    var answer = question.answer(0.75, source, 0.5);
+    Jev.ScoreQuestion question = two.build().minConfidence(0.5);
+    List<Double> source = new java.util.ArrayList<>(List.of(0.2, 0.8));
+    Jev.ScoreAnswer answer = question.answer(0.75, source, 0.5);
     source.set(1, 0.1);
     assertEquals(0.8, answer.probabilities().get(1));
     assertEquals(0.75, answer.acceptedValue().orElseThrow());
@@ -195,30 +198,14 @@ final class JevTest {
         IllegalArgumentException.class,
         () -> question.answer(Double.POSITIVE_INFINITY, List.of(0.2, 0.8), 0.5));
 
-    var tooMany = Jev.score("too many");
+    @Var Jev.ScoreBuilder tooMany = Jev.score("too many");
     for (int index = 0; index < 11; index++) {
       tooMany = tooMany.level("level " + index);
     }
-    var invalid = tooMany;
+    Jev.ScoreBuilder invalid = tooMany;
     assertThrows(IllegalArgumentException.class, invalid::build);
     assertThrows(
         IllegalArgumentException.class,
         () -> Jev.score("duplicate").level("same").level("same").build());
-  }
-
-  @Test
-  void readmeChoiceAndScoreExamplesCompile() {
-    var choice =
-        Jev.choice(Weather.class, "Choose the expected weather")
-            .answer(Weather.RAIN, Map.of(Weather.SUN, 0.4, Weather.RAIN, 0.6), 0.9);
-    var score =
-        Jev.score("Rate the result")
-            .level("poor")
-            .level("excellent")
-            .build()
-            .answer(0.75, List.of(0.2, 0.8), 0.9);
-
-    assertEquals(Weather.RAIN, choice.acceptedValue().orElseThrow());
-    assertEquals(0.75, score.acceptedValue().orElseThrow());
   }
 }

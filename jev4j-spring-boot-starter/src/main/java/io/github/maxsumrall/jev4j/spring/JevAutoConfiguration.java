@@ -1,5 +1,6 @@
 package io.github.maxsumrall.jev4j.spring;
 
+import com.google.errorprone.annotations.Var;
 import io.github.maxsumrall.jev4j.JevEvaluator;
 import java.net.http.HttpClient;
 import org.springframework.beans.factory.ObjectProvider;
@@ -22,7 +23,7 @@ public class JevAutoConfiguration {
           "jev.api-key must be configured when no JevEvaluator bean is supplied");
     }
 
-    JevEvaluator.Builder builder = JevEvaluator.builder(apiKey);
+    @Var JevEvaluator.Builder builder = JevEvaluator.builder(apiKey);
     builder =
         properties.provider() == JevProperties.Provider.OPENROUTER
             ? builder.openRouter()

@@ -59,9 +59,19 @@ class OfflineAnswerConfiguration {
       double safetyProbability,
       double urgencyScore,
       Map<Urgency, Double> urgencyProbabilities) {
-    Fixture {
-      categoryProbabilities = Map.copyOf(categoryProbabilities);
-      urgencyProbabilities = Map.copyOf(urgencyProbabilities);
+    Fixture(
+        Category category,
+        Map<Category, Double> categoryProbabilities,
+        double confidence,
+        double safetyProbability,
+        double urgencyScore,
+        Map<Urgency, Double> urgencyProbabilities) {
+      this.category = category;
+      this.categoryProbabilities = Map.copyOf(categoryProbabilities);
+      this.confidence = confidence;
+      this.safetyProbability = safetyProbability;
+      this.urgencyScore = urgencyScore;
+      this.urgencyProbabilities = Map.copyOf(urgencyProbabilities);
     }
   }
 }

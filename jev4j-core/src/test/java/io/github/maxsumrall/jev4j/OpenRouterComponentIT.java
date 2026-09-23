@@ -45,21 +45,21 @@ final class OpenRouterComponentIT {
 
   @Test
   void evaluatesThreePrimitiveQuestionTypesAgainstOpenRouter() {
-    var evaluator =
+    JevEvaluator evaluator =
         JevEvaluator.builder(apiKey)
             .openRouter()
             .model("jev-latest")
             .timeout(Duration.ofSeconds(30))
             .build();
 
-    var noul =
+    JevEvaluator.Evaluation<Jev.NoulAnswer> noul =
         evaluator.evaluateWithMetadata(
             Jev.noul("Is the synthetic input explicitly about a duplicate charge?"),
             "Synthetic test input: my card shows the same grocery charge twice.");
     assertProbability(noul.answer().probabilityTrue());
     assertMetadata(noul);
 
-    var choice =
+    JevEvaluator.Evaluation<Jev.ChoiceAnswer<Route>> choice =
         evaluator.evaluateWithMetadata(
             Jev.choice(Route.class, "Choose the best route for this synthetic request"),
             "Synthetic test input: please explain an unfamiliar invoice fee.");
@@ -70,7 +70,7 @@ final class OpenRouterComponentIT {
     assertProbability(choice.answer().confidence());
     assertMetadata(choice);
 
-    var score =
+    JevEvaluator.Evaluation<Jev.EnumScoreAnswer<Quality>> score =
         evaluator.evaluateWithMetadata(
             Jev.score(Quality.class, "Score the quality of this synthetic response"),
             "Question: What is 2 + 2? Response: 4.");

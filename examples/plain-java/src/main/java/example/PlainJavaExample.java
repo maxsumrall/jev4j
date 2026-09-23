@@ -58,18 +58,18 @@ public final class PlainJavaExample {
   private static void runSynthetic() {
     System.out.println("SYNTHETIC LOCAL ANSWERS (not model output; no network call)");
 
-    var refund = REFUND.answer(0.74);
+    Jev.ThresholdNoulAnswer refund = REFUND.answer(0.74);
     System.out.printf(
         "refund: configured=%s, stricter override=%s%n", refund.isTrue(), refund.isTrueAt(0.80));
 
-    var destination =
+    Jev.ChoiceAnswer<Destination> destination =
         DESTINATION.answer(
             Destination.BILLING,
             Map.of(Destination.BILLING, 0.78, Destination.SUPPORT, 0.22),
             0.88);
     System.out.println("route: " + route(destination));
 
-    var urgency =
+    Jev.EnumScoreAnswer<Urgency> urgency =
         URGENCY.answer(
             1.5, Map.of(Urgency.LOW, 0.10, Urgency.MEDIUM, 0.40, Urgency.HIGH, 0.50), 0.90);
     System.out.println("urgency: " + urgencyRoute(urgency));
@@ -81,7 +81,7 @@ public final class PlainJavaExample {
       throw new IllegalStateException("OPENROUTER_API_KEY must be set for --live");
     }
     // The key is passed directly to the client and is never printed.
-    var evaluator = JevEvaluator.builder(apiKey).openRouter().model(model).build();
+    JevEvaluator evaluator = JevEvaluator.builder(apiKey).openRouter().model(model).build();
     String state = "I was charged twice and need this fixed today.";
     System.out.println("LIVE OpenRouter model output");
     System.out.println("refund: " + evaluator.evaluate(REFUND, state).isTrue());

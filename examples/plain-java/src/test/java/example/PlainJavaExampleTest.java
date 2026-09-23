@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 class PlainJavaExampleTest {
   @Test
   void choiceRoutesAcceptedAndReviewAnswers() {
-    var question =
+    Jev.ChoiceQuestion<PlainJavaExample.Destination> question =
         Jev.choice(PlainJavaExample.Destination.class, "Route it")
             .minConfidence(0.70)
             .minProbability(0.60);
@@ -40,8 +40,9 @@ class PlainJavaExampleTest {
 
   @Test
   void scoreMidpointRoundsUpAndLowConfidenceFallsBack() {
-    var question = Jev.score(PlainJavaExample.Urgency.class, "Score urgency").minConfidence(0.65);
-    var probabilities =
+    Jev.EnumScoreQuestion<PlainJavaExample.Urgency> question =
+        Jev.score(PlainJavaExample.Urgency.class, "Score urgency").minConfidence(0.65);
+    Map<PlainJavaExample.Urgency, Double> probabilities =
         Map.of(
             PlainJavaExample.Urgency.LOW,
             0.10,

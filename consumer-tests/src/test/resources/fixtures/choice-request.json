@@ -1,0 +1,1 @@
+{"state":"customer asks about a parcel","model":"fixture-model","questions":{"question":{"type":"choice","instructions":"Route the request","criteria":{"BILLING":"charges and refunds","DELIVERY":"shipping and parcels","OTHER":"everything else"}}}}

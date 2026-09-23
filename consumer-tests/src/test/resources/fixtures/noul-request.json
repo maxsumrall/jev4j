@@ -1,0 +1,1 @@
+{"state":"clouds","model":"fixture-model","questions":{"question":{"type":"noul","instructions":"Is rain likely?","criteria":{"true":"rain is likely","false":"rain is unlikely"}}}}

@@ -1,0 +1,1 @@
+{"model":"fixture-provider","answers":{"question":{"type":"score","score":1.4,"probabilities":{"0":0.1,"1":0.4,"2":0.5},"confidence":0.69}},"usage":{"input_tokens":13,"output_tokens":4}}

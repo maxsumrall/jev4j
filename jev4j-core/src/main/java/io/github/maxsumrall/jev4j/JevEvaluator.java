@@ -16,6 +16,7 @@ import java.util.OptionalDouble;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /** Immutable, thread-safe HTTP client for evaluating one Jev question at a time. */
@@ -94,7 +95,7 @@ public final class JevEvaluator {
   public <E extends Enum<E>> Evaluation<Jev.ChoiceAnswer<E>> evaluateWithMetadata(
       Jev.ChoiceQuestion<E> question, String state) {
     Objects.requireNonNull(question, "question");
-    var criteria = JSON.createObjectNode();
+    ObjectNode criteria = JSON.createObjectNode();
     question.descriptions().forEach((key, value) -> criteria.put(key.name(), value));
     return exchange(
         questionNode("choice", question.instructions(), criteria),
@@ -116,7 +117,7 @@ public final class JevEvaluator {
   public <E extends Enum<E>> Evaluation<Jev.EnumScoreAnswer<E>> evaluateWithMetadata(
       Jev.EnumScoreQuestion<E> question, String state) {
     Objects.requireNonNull(question, "question");
-    var criteria = JSON.createArrayNode();
+    ArrayNode criteria = JSON.createArrayNode();
     for (E level : question.levelType().getEnumConstants())
       criteria.add(question.descriptions().get(level));
     return exchange(
@@ -124,8 +125,9 @@ public final class JevEvaluator {
         state,
         answer -> {
           requireType(answer, "score");
-          var values = indexedProbabilities(answer, question.levelType().getEnumConstants().length);
-          var probabilities = new EnumMap<E, Double>(question.levelType());
+          List<Double> values =
+              indexedProbabilities(answer, question.levelType().getEnumConstants().length);
+          Map<E, Double> probabilities = new EnumMap<>(question.levelType());
           E[] levels = question.levelType().getEnumConstants();
           for (int i = 0; i < levels.length; i++) probabilities.put(levels[i], values.get(i));
           return question.answer(
@@ -138,7 +140,7 @@ public final class JevEvaluator {
   public Evaluation<Jev.ScoreAnswer> evaluateWithMetadata(
       Jev.ScoreQuestion question, String state) {
     Objects.requireNonNull(question, "question");
-    var criteria = JSON.createArrayNode();
+    ArrayNode criteria = JSON.createArrayNode();
     question.levels().forEach(criteria::add);
     return exchange(
         questionNode("score", question.instructions(), criteria),
@@ -154,7 +156,7 @@ public final class JevEvaluator {
 
   private <T> Evaluation<T> exchange(ObjectNode question, String state, AnswerDecoder<T> decoder) {
     Objects.requireNonNull(state, "state");
-    var root = JSON.createObjectNode();
+    ObjectNode root = JSON.createObjectNode();
     root.put("state", state);
     root.put("model", model);
     root.putObject("questions").set(QUESTION_KEY, question);
@@ -176,7 +178,7 @@ public final class JevEvaluator {
     }
     if (response.statusCode() < 200 || response.statusCode() >= 300)
       throw new JevEvaluationException(
-          "evaluation failed with HTTP status " + response.statusCode());
+          "evaluation failed with HTTP status " + response.statusCode(), response.statusCode());
     try {
       JsonNode body = JSON.readTree(response.body());
       if (body == null || !body.isObject()) throw malformed("response must be a JSON object");
@@ -205,13 +207,13 @@ public final class JevEvaluator {
   }
 
   private static ObjectNode questionNode(String type, String instructions, JsonNode criteria) {
-    var node = JSON.createObjectNode().put("type", type).put("instructions", instructions);
+    ObjectNode node = JSON.createObjectNode().put("type", type).put("instructions", instructions);
     if (!criteria.isEmpty()) node.set("criteria", criteria);
     return node;
   }
 
   private static ObjectNode noulCriteria(Map<Boolean, String> descriptions) {
-    var node = JSON.createObjectNode();
+    ObjectNode node = JSON.createObjectNode();
     descriptions.forEach((key, value) -> node.put(key.toString(), value));
     return node;
   }
@@ -268,7 +270,7 @@ public final class JevEvaluator {
       JsonNode answer, Class<E> type) {
     JsonNode node = answer.get("probabilities");
     if (node == null || !node.isObject()) throw malformed("missing object 'probabilities'");
-    var result = new EnumMap<E, Double>(type);
+    Map<E, Double> result = new EnumMap<>(type);
     for (E value : type.getEnumConstants())
       result.put(value, requiredProbability(node, value.name()));
     if (node.size() != result.size())
@@ -279,7 +281,7 @@ public final class JevEvaluator {
   private static List<Double> indexedProbabilities(JsonNode answer, int count) {
     JsonNode node = answer.get("probabilities");
     if (node == null || !node.isObject()) throw malformed("missing object 'probabilities'");
-    var result = new ArrayList<Double>();
+    List<Double> result = new ArrayList<>();
     for (int i = 0; i < count; i++) result.add(requiredProbability(node, Integer.toString(i)));
     if (node.size() != count) throw malformed("probabilities contain unexpected score levels");
     return result;
@@ -323,7 +325,7 @@ public final class JevEvaluator {
 
     private Builder(String apiKey) {
       this(
-          requireText(apiKey, "apiKey"),
+          requireApiKey(apiKey),
           TYPESAFE_BASE_URI,
           "jev-latest",
           Duration.ofSeconds(30),
@@ -385,6 +387,13 @@ public final class JevEvaluator {
     private static String requireText(String value, String name) {
       Objects.requireNonNull(value, name);
       if (value.isBlank()) throw new IllegalArgumentException(name + " must not be blank");
+      return value;
+    }
+
+    private static String requireApiKey(String value) {
+      requireText(value, "apiKey");
+      if (!value.matches("[A-Za-z0-9\\-._~+/]+={0,}"))
+        throw new IllegalArgumentException("apiKey contains unsupported characters");
       return value;
     }
   }

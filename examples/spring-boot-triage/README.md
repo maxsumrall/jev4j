@@ -60,3 +60,6 @@ cd /tmp/jev4j-spring-boot-triage
 mvn verify
 mvn spring-boot:run
 ```
+
+Run Maven with JDK 17. The copied `.mvn/jvm.config` supplies the JVM access required by Error Prone,
+so copy the whole directory, including hidden files.

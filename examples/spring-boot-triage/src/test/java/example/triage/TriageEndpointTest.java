@@ -1,73 +1,67 @@
 package example.triage;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest
-@AutoConfigureMockMvc
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Tag("synthetic")
 class TriageEndpointTest {
-  @Autowired private MockMvc mvc;
+  private static final ObjectMapper JSON = new ObjectMapper();
+  @LocalServerPort private int port;
 
   @Test
-  void routesTheThreeDocumentedFixtures() throws Exception {
+  void routesTheThreeDocumentedFixturesOverHttp() throws Exception {
     assertRoute("I was charged twice for my groceries.", "BILLING", "BILLING_SUPPORT");
     assertRoute("My delivery is late and has not arrived.", "DELIVERY", "DELIVERY_SUPPORT");
     assertRoute("How do I update my loyalty card name?", "OTHER", "GENERAL_SUPPORT");
   }
 
   @Test
-  void unfamiliarTextUsesAnExplicitLowConfidenceManualReview() throws Exception {
-    mvc.perform(
-            post("/triage")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(json("Unlisted fixture")))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.selectedCategory").value("OTHER"))
-        .andExpect(jsonPath("$.queue").value("MANUAL_REVIEW"))
-        .andExpect(jsonPath("$.decision").value("MANUAL_REVIEW_LOW_CONFIDENCE"))
-        .andExpect(jsonPath("$.confidence").value(0.41))
-        .andExpect(jsonPath("$.answerSource").value("synthetic-offline-fixture"));
+  void unfamiliarTextUsesExplicitManualReview() throws Exception {
+    JsonNode body = post("Unlisted fixture", 200);
+    assertEquals("OTHER", body.get("selectedCategory").textValue());
+    assertEquals("MANUAL_REVIEW", body.get("queue").textValue());
+    assertEquals("MANUAL_REVIEW_LOW_CONFIDENCE", body.get("decision").textValue());
+    assertEquals(0.41, body.get("confidence").doubleValue());
   }
 
   @Test
-  void rejectsBlankAndOversizedInput() throws Exception {
-    mvc.perform(post("/triage").contentType(MediaType.APPLICATION_JSON).content(json("  ")))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("INVALID_INPUT"));
-    mvc.perform(
-            post("/triage").contentType(MediaType.APPLICATION_JSON).content(json("x".repeat(1001))))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("INVALID_INPUT"));
-  }
-
-  @Test
-  void acceptsMaximumLengthInput() throws Exception {
-    mvc.perform(
-            post("/triage").contentType(MediaType.APPLICATION_JSON).content(json("x".repeat(1000))))
-        .andExpect(status().isOk());
+  void enforcesInputBoundaries() throws Exception {
+    assertEquals("INVALID_INPUT", post("  ", 400).get("code").textValue());
+    post("x".repeat(1000), 200);
+    assertEquals("INVALID_INPUT", post("x".repeat(1001), 400).get("code").textValue());
   }
 
   private void assertRoute(String message, String category, String queue) throws Exception {
-    mvc.perform(post("/triage").contentType(MediaType.APPLICATION_JSON).content(json(message)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.selectedCategory").value(category))
-        .andExpect(jsonPath("$.queue").value(queue))
-        .andExpect(jsonPath("$.decision").value("ROUTE"))
-        .andExpect(jsonPath("$.categoryProbabilities").isMap())
-        .andExpect(jsonPath("$.answerSource").value("synthetic-offline-fixture"));
+    JsonNode body = post(message, 200);
+    assertEquals(category, body.get("selectedCategory").textValue());
+    assertEquals(queue, body.get("queue").textValue());
+    assertEquals("ROUTE", body.get("decision").textValue());
+    assertEquals("synthetic-offline-fixture", body.get("answerSource").textValue());
+    assertEquals(3, body.get("categoryProbabilities").size());
   }
 
-  private static String json(String message) {
-    return "{\"message\":\"" + message + "\"}";
+  private JsonNode post(String message, int expectedStatus) throws Exception {
+    String requestBody = JSON.writeValueAsString(Map.of("message", message));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/triage"))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+            .build();
+    HttpResponse<String> response =
+        HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+    assertEquals(expectedStatus, response.statusCode(), response.body());
+    return JSON.readTree(response.body());
   }
 }

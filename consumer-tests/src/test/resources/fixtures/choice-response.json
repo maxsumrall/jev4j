@@ -1,0 +1,1 @@
+{"model":"fixture-provider","answers":{"question":{"type":"choice","choice":"DELIVERY","probabilities":{"BILLING":0.11,"DELIVERY":0.78,"OTHER":0.11},"confidence":0.81}},"usage":{"input_tokens":12,"output_tokens":3}}

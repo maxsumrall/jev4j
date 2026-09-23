@@ -37,6 +37,9 @@ mvn verify
 mvn exec:java
 ```
 
+Run Maven with JDK 17. The copied `.mvn/jvm.config` supplies the JVM access required by Error Prone,
+so copy the whole directory, including hidden files.
+
 The example sets `maven.deploy.skip=true` to prevent accidental deployment and has no source
 publication configuration. When using a released library, replace the snapshot dependency version
 in `pom.xml` with that release.

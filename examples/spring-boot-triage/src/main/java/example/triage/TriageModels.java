@@ -51,8 +51,25 @@ record TriageResponse(
     double urgencyScore,
     Urgency urgency,
     String answerSource) {
-  TriageResponse {
-    categoryProbabilities = Map.copyOf(categoryProbabilities);
+  TriageResponse(
+      String queue,
+      String decision,
+      Category selectedCategory,
+      Map<Category, Double> categoryProbabilities,
+      double confidence,
+      double safetyConcernProbability,
+      double urgencyScore,
+      Urgency urgency,
+      String answerSource) {
+    this.queue = queue;
+    this.decision = decision;
+    this.selectedCategory = selectedCategory;
+    this.categoryProbabilities = Map.copyOf(categoryProbabilities);
+    this.confidence = confidence;
+    this.safetyConcernProbability = safetyConcernProbability;
+    this.urgencyScore = urgencyScore;
+    this.urgency = urgency;
+    this.answerSource = answerSource;
   }
 }
 

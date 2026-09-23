@@ -1,5 +1,6 @@
 package io.github.maxsumrall.jev4j;
 
+import com.google.errorprone.annotations.Var;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -13,6 +14,7 @@ import java.util.OptionalDouble;
 /** Entry point and immutable contracts for Jev questions and answers. */
 public final class Jev {
   public static final int MAX_CHOICES = 255;
+  private static final double DISTRIBUTION_SUM_TOLERANCE = 1e-6;
 
   private Jev() {}
 
@@ -47,13 +49,13 @@ public final class Jev {
   }
 
   public record NoulQuestion(String instructions, Map<Boolean, String> descriptions) {
-    public NoulQuestion {
-      instructions = text(instructions, "instructions");
-      descriptions = validDescriptions(descriptions);
+    public NoulQuestion(String instructions, Map<Boolean, String> descriptions) {
+      this.instructions = text(instructions, "instructions");
+      this.descriptions = validDescriptions(descriptions);
     }
 
     public NoulQuestion describe(boolean value, String description) {
-      var copy = new LinkedHashMap<>(descriptions);
+      Map<Boolean, String> copy = new LinkedHashMap<>(descriptions);
       copy.put(value, text(description, "description"));
       return new NoulQuestion(instructions, copy);
     }
@@ -72,14 +74,15 @@ public final class Jev {
 
   public record ThresholdNoulQuestion(
       String instructions, Map<Boolean, String> descriptions, double threshold) {
-    public ThresholdNoulQuestion {
-      instructions = text(instructions, "instructions");
-      descriptions = validDescriptions(descriptions);
-      threshold = probability(threshold, "threshold");
+    public ThresholdNoulQuestion(
+        String instructions, Map<Boolean, String> descriptions, double threshold) {
+      this.instructions = text(instructions, "instructions");
+      this.descriptions = validDescriptions(descriptions);
+      this.threshold = probability(threshold, "threshold");
     }
 
     public ThresholdNoulQuestion describe(boolean value, String description) {
-      var copy = new LinkedHashMap<>(descriptions);
+      Map<Boolean, String> copy = new LinkedHashMap<>(descriptions);
       copy.put(value, text(description, "description"));
       return new ThresholdNoulQuestion(instructions, copy, threshold);
     }
@@ -95,8 +98,8 @@ public final class Jev {
   }
 
   public record NoulAnswer(double probabilityTrue) {
-    public NoulAnswer {
-      probabilityTrue = probability(probabilityTrue, "probabilityTrue");
+    public NoulAnswer(double probabilityTrue) {
+      this.probabilityTrue = probability(probabilityTrue, "probabilityTrue");
     }
 
     /** Applies an inclusive threshold in {@code [0, 1]}. */
@@ -106,9 +109,9 @@ public final class Jev {
   }
 
   public record ThresholdNoulAnswer(double probabilityTrue, double threshold) {
-    public ThresholdNoulAnswer {
-      probabilityTrue = probability(probabilityTrue, "probabilityTrue");
-      threshold = probability(threshold, "threshold");
+    public ThresholdNoulAnswer(double probabilityTrue, double threshold) {
+      this.probabilityTrue = probability(probabilityTrue, "probabilityTrue");
+      this.threshold = probability(threshold, "threshold");
     }
 
     /** Applies the question's configured inclusive threshold. */
@@ -137,7 +140,7 @@ public final class Jev {
         double minProbability) {
       this.optionType = enumType(optionType, 1, MAX_CHOICES);
       this.instructions = text(instructions, "instructions");
-      var copy = new EnumMap<E, String>(optionType);
+      Map<E, String> copy = new EnumMap<>(optionType);
       for (E option : optionType.getEnumConstants()) {
         copy.put(
             option,
@@ -151,7 +154,7 @@ public final class Jev {
     }
 
     public ChoiceQuestion<E> describe(E option, String description) {
-      var copy = new EnumMap<>(descriptions);
+      Map<E, String> copy = new EnumMap<>(descriptions);
       copy.put(member(optionType, option), text(description, "description"));
       return new ChoiceQuestion<>(optionType, instructions, copy, minConfidence, minProbability);
     }
@@ -249,7 +252,7 @@ public final class Jev {
         double minConfidence) {
       this.levelType = enumType(levelType, 2, 10);
       this.instructions = text(instructions, "instructions");
-      var copy = new EnumMap<E, String>(levelType);
+      Map<E, String> copy = new EnumMap<>(levelType);
       for (E level : levelType.getEnumConstants()) {
         copy.put(
             level,
@@ -262,7 +265,7 @@ public final class Jev {
     }
 
     public EnumScoreQuestion<E> describe(E level, String description) {
-      var copy = new EnumMap<>(descriptions);
+      Map<E, String> copy = new EnumMap<>(descriptions);
       copy.put(member(levelType, level), text(description, "description"));
       return new EnumScoreQuestion<>(levelType, instructions, copy, minConfidence);
     }
@@ -343,14 +346,14 @@ public final class Jev {
   }
 
   public record ScoreBuilder(String instructions, List<String> levels) {
-    public ScoreBuilder {
-      instructions = text(instructions, "instructions");
-      levels = List.copyOf(levels);
-      levels.forEach(level -> text(level, "level"));
+    public ScoreBuilder(String instructions, List<String> levels) {
+      this.instructions = text(instructions, "instructions");
+      this.levels = List.copyOf(levels);
+      this.levels.forEach(level -> text(level, "level"));
     }
 
     public ScoreBuilder level(String label) {
-      var copy = new ArrayList<>(levels);
+      List<String> copy = new ArrayList<>(levels);
       copy.add(text(label, "label"));
       return new ScoreBuilder(instructions, copy);
     }
@@ -366,15 +369,15 @@ public final class Jev {
   }
 
   public record ScoreQuestion(String instructions, List<String> levels, double minConfidence) {
-    public ScoreQuestion {
-      instructions = text(instructions, "instructions");
-      levels = List.copyOf(levels);
-      levels.forEach(level -> text(level, "level"));
-      if (levels.size() < 2
-          || levels.size() > 10
-          || levels.stream().distinct().count() != levels.size())
+    public ScoreQuestion(String instructions, List<String> levels, double minConfidence) {
+      this.instructions = text(instructions, "instructions");
+      this.levels = List.copyOf(levels);
+      this.levels.forEach(level -> text(level, "level"));
+      if (this.levels.size() < 2
+          || this.levels.size() > 10
+          || this.levels.stream().distinct().count() != this.levels.size())
         throw new IllegalArgumentException("score requires 2-10 distinct levels");
-      minConfidence = probability(minConfidence, "minConfidence");
+      this.minConfidence = probability(minConfidence, "minConfidence");
     }
 
     public ScoreQuestion minConfidence(double value) {
@@ -437,7 +440,7 @@ public final class Jev {
 
   private static Map<Boolean, String> validDescriptions(Map<Boolean, String> descriptions) {
     Objects.requireNonNull(descriptions, "descriptions");
-    var copy = new LinkedHashMap<Boolean, String>();
+    Map<Boolean, String> copy = new LinkedHashMap<>();
     descriptions.forEach(
         (value, description) ->
             copy.put(
@@ -474,7 +477,7 @@ public final class Jev {
   private static <E extends Enum<E>> Map<E, Double> distribution(
       Class<E> type, Map<E, Double> input) {
     Objects.requireNonNull(input, "probabilities");
-    var result = new EnumMap<E, Double>(type);
+    Map<E, Double> result = new EnumMap<>(type);
     input.forEach(
         (key, value) ->
             result.put(
@@ -482,6 +485,7 @@ public final class Jev {
                 probability(Objects.requireNonNull(value, "probability"), "probability")));
     if (result.size() != type.getEnumConstants().length)
       throw new IllegalArgumentException("probabilities must contain every enum value");
+    requireUnitTotal(result.values());
     return Collections.unmodifiableMap(result);
   }
 
@@ -489,8 +493,18 @@ public final class Jev {
     Objects.requireNonNull(input, "probabilities");
     if (input.size() != size)
       throw new IllegalArgumentException("one probability per level required");
-    return input.stream()
-        .map(value -> probability(Objects.requireNonNull(value, "probability"), "probability"))
-        .toList();
+    List<Double> result =
+        input.stream()
+            .map(value -> probability(Objects.requireNonNull(value, "probability"), "probability"))
+            .toList();
+    requireUnitTotal(result);
+    return result;
+  }
+
+  private static void requireUnitTotal(Iterable<Double> probabilities) {
+    @Var double total = 0;
+    for (double probability : probabilities) total += probability;
+    if (Math.abs(total - 1.0) > DISTRIBUTION_SUM_TOLERANCE)
+      throw new IllegalArgumentException("probabilities must sum to 1 within 0.000001");
   }
 }
