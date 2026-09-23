@@ -77,6 +77,8 @@ final class PublicTypeContractTest {
           CompletableFuture<JevEvaluator.Evaluation<Jev.EnumScoreAnswer<Route>>> ame = e.evaluateWithMetadataAsync(input, es);
           CompletableFuture<JevEvaluator.Evaluation<Jev.ScoreAnswer>> ams = e.evaluateWithMetadataAsync(input, s);
           Jev.Question<Jev.NoulAnswer> generic = n;
+          Jev.NoulAnswer genericAnswer = e.evaluate(input, generic);
+          JevEvaluator.Evaluation<Jev.NoulAnswer> genericMetadata = e.evaluateWithMetadata(input, generic);
           CompletableFuture<Jev.NoulAnswer> ag = e.evaluateAsync(input, generic);
           """);
       for (int arity = 2; arity <= 8; arity++) {

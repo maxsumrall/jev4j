@@ -36,7 +36,7 @@ business action.
 ## Explicit live opt-in
 
 The `live` profile enables the starter's OpenRouter evaluator and uses `jev-latest`. It can incur
-provider charges and performs three evaluations per request. The key and customer message are not
+provider charges and evaluates three questions together in one provider request. The key and customer message are not
 logged by this application. Do not put the key in source or command arguments:
 
 ```sh

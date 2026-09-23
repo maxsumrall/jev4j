@@ -11,10 +11,11 @@ class LiveAnswerConfiguration {
   @Bean
   TriageAnswerSource liveAnswerSource(JevEvaluator evaluator) {
     return message ->
-        new TriageAnswers(
-            evaluator.evaluate(message, TriageQuestions.CATEGORY),
-            evaluator.evaluate(message, TriageQuestions.SAFETY),
-            evaluator.evaluate(message, TriageQuestions.URGENCY),
-            "live-openrouter");
+        evaluator
+            .evaluate(
+                message, TriageQuestions.CATEGORY, TriageQuestions.SAFETY, TriageQuestions.URGENCY)
+            .map(
+                (category, safety, urgency) ->
+                    new TriageAnswers(category, safety, urgency, "live-openrouter"));
   }
 }

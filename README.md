@@ -324,6 +324,8 @@ java.util.Optional<String> requestId = evaluation.requestId();
 ```
 
 Both presets call `/v1/systemone`; OpenRouter uses the base URI `https://openrouter.ai/api`.
+Use only trusted HTTPS endpoints for production `baseUri` overrides: the evaluator sends your
+bearer key and input there. Plain HTTP is supported for local tests, not secure transport.
 Use a Jev model, not a chat-completions model. The evaluator does not retry requests or close a
 caller-supplied HTTP client. HTTP, network, and malformed-response failures raise
 `JevEvaluationException`; `httpStatusCode()` contains the numeric status only for HTTP failures.
@@ -434,9 +436,8 @@ CompletableFuture<Boolean> asyncDecision = configured.testAsync(ticketState, ref
 
 CompletableFuture<JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>>> asyncPair =
     configured.evaluateAsync(ticketState, refundRequested, department);
-CompletableFuture<RoutingDecision> asyncRouting = asyncPair.thenApply(
-    (JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>> pairResult) ->
-        pairResult.map(RoutingDecision::new));
+CompletableFuture<RoutingDecision> asyncRouting =
+    asyncPair.thenApply(pair -> pair.map(RoutingDecision::new));
 
 // If this evaluation is no longer needed, cancel the original operation, not asyncRouting.
 asyncPair.cancel(true);

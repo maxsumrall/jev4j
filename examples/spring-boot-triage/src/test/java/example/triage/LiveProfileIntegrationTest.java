@@ -73,12 +73,14 @@ class LiveProfileIntegrationTest {
     assertEquals("DELIVERY", parsed.get("selectedCategory").textValue());
     assertEquals("DELIVERY_SUPPORT", parsed.get("queue").textValue());
     assertEquals("live-openrouter", parsed.get("answerSource").textValue());
-    assertEquals(3, REQUESTS.size());
-    assertTrue(
-        REQUESTS.stream().allMatch(body -> body.contains("\"state\":\"live customer message\"")));
-    assertTrue(REQUESTS.stream().anyMatch(body -> body.contains("\"type\":\"choice\"")));
-    assertTrue(REQUESTS.stream().anyMatch(body -> body.contains("\"type\":\"noul\"")));
-    assertTrue(REQUESTS.stream().anyMatch(body -> body.contains("\"type\":\"score\"")));
+    assertEquals(1, REQUESTS.size());
+    tools.jackson.databind.JsonNode sent =
+        new tools.jackson.databind.ObjectMapper().readTree(REQUESTS.get(0));
+    assertEquals("live customer message", sent.path("state").textValue());
+    assertEquals(3, sent.path("questions").size());
+    assertEquals("choice", sent.at("/questions/question1/type").textValue());
+    assertEquals("noul", sent.at("/questions/question2/type").textValue());
+    assertEquals("score", sent.at("/questions/question3/type").textValue());
   }
 
   @Test
@@ -142,22 +144,12 @@ class LiveProfileIntegrationTest {
       exchange.close();
       return;
     }
-    String answer;
-    if (request.contains("\"type\":\"choice\"")) {
-      answer =
-          "{\"type\":\"choice\",\"choice\":\"DELIVERY\",\"probabilities\":{\"BILLING\":0.05,\"DELIVERY\":0.9,\"OTHER\":0.05},\"confidence\":"
-              + CHOICE_CONFIDENCE.get()
-              + "}";
-    } else if (request.contains("\"type\":\"noul\"")) {
-      answer = "{\"type\":\"noul\",\"noul\":0.1}";
-    } else {
-      answer =
-          "{\"type\":\"score\",\"score\":0.75,\"probabilities\":{\"0\":0.25,\"1\":0.75,\"2\":0.0},\"confidence\":0.9}";
-    }
     byte[] response =
-        ("{\"model\":\"fake-jev\",\"answers\":{\"question\":"
-                + answer
-                + "},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}")
+        ("{\"model\":\"fake-jev\",\"answers\":{"
+                + "\"question3\":{\"type\":\"score\",\"score\":0.75,\"probabilities\":{\"0\":0.25,\"1\":0.75,\"2\":0.0},\"confidence\":0.9},"
+                + "\"question1\":{\"type\":\"choice\",\"choice\":\"DELIVERY\",\"probabilities\":{\"BILLING\":0.05,\"DELIVERY\":0.9,\"OTHER\":0.05},\"confidence\":"
+                + CHOICE_CONFIDENCE.get()
+                + "},\"question2\":{\"type\":\"noul\",\"noul\":0.1}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}")
             .getBytes(StandardCharsets.UTF_8);
     exchange.getResponseHeaders().add("Content-Type", "application/json");
     exchange.sendResponseHeaders(200, response.length);

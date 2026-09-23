@@ -75,6 +75,11 @@ public final class JevEvaluator {
     return new Builder(apiKey);
   }
 
+  /** Evaluates literal text, preserving a generic question's answer type. */
+  public <A> A evaluate(String state, Jev.Question<A> question) {
+    return evaluate(Jev.State.from(state), question);
+  }
+
   public Jev.NoulAnswer evaluate(String state, Jev.NoulQuestion question) {
     return evaluateWithMetadata(state, question).answer();
   }
@@ -127,6 +132,11 @@ public final class JevEvaluator {
 
   public Evaluation<Jev.ScoreAnswer> evaluateWithMetadata(
       String state, Jev.ScoreQuestion question) {
+    return evaluateWithMetadata(Jev.State.from(state), question);
+  }
+
+  /** Evaluates literal text and returns request-level metadata with the typed answer. */
+  public <A> Evaluation<A> evaluateWithMetadata(String state, Jev.Question<A> question) {
     return evaluateWithMetadata(Jev.State.from(state), question);
   }
 
