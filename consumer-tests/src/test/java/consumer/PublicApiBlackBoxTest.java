@@ -205,6 +205,109 @@ final class PublicApiBlackBoxTest {
   }
 
   @Test
+  void multiQuestionCorrelatesByKeyMapsInOrderAndSharesMetadata() throws Exception {
+    response.set(
+        "{\"id\":\"batch-1\",\"provider\":\"local\",\"model\":\"fixture-provider\",\"answers\":{"
+            + "\"question3\":{\"type\":\"score\",\"score\":1.4,\"probabilities\":{\"0\":0.1,\"1\":0.4,\"2\":0.5},\"confidence\":0.8},"
+            + "\"question1\":{\"type\":\"noul\",\"noul\":0.75},"
+            + "\"question2\":{\"type\":\"choice\",\"choice\":\"DELIVERY\",\"probabilities\":{\"BILLING\":0.1,\"DELIVERY\":0.8,\"OTHER\":0.1},\"confidence\":0.9}},"
+            + "\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}");
+    int before = requestCount.get();
+    JevEvaluator.Evaluation3<Jev.NoulAnswer, Jev.ChoiceAnswer<Route>, Jev.ScoreAnswer> result =
+        evaluator()
+            .evaluate(
+                "state",
+                Jev.noul("refund?"),
+                Jev.choice(Route.class, "route"),
+                Jev.score("quality").level("poor").level("ok").level("great").build());
+    record Decision(boolean refund, Route route, double quality) {}
+    Decision decision =
+        result.map(
+            (Jev.NoulAnswer refund, Jev.ChoiceAnswer<Route> route, Jev.ScoreAnswer quality) ->
+                new Decision(refund.isTrue(), route.value(), quality.value()));
+    assertEquals(new Decision(true, Route.DELIVERY, 1.4), decision);
+    assertEquals("batch-1", result.id().orElseThrow());
+    assertEquals(7, result.usage().inputTokens());
+    assertEquals(before + 1, requestCount.get());
+    assertEquals(
+        List.of("question1", "question2", "question3"),
+        JSON.readTree(request.get())
+            .get("questions")
+            .propertyStream()
+            .map(Map.Entry::getKey)
+            .toList());
+  }
+
+  @Test
+  void multiQuestionSupportsArityEightAndRejectsMissingOrWrongAnswers() {
+    String answer = "{\"type\":\"noul\",\"noul\":0.6}";
+    StringBuilder answers = new StringBuilder();
+    for (int i = 1; i <= 8; i++) {
+      if (i > 1) answers.append(',');
+      answers
+          .append("\"question")
+          .append(i)
+          .append("\":{\"type\":\"noul\",\"noul\":0.")
+          .append(i)
+          .append('}');
+    }
+    response.set(
+        "{\"model\":\"m\",\"answers\":{"
+            + answers
+            + "},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    JevEvaluator.Evaluation8<
+            Jev.NoulAnswer,
+            Jev.NoulAnswer,
+            Jev.NoulAnswer,
+            Jev.NoulAnswer,
+            Jev.NoulAnswer,
+            Jev.NoulAnswer,
+            Jev.NoulAnswer,
+            Jev.NoulAnswer>
+        result =
+            evaluator()
+                .evaluate(
+                    "state",
+                    Jev.noul("1"),
+                    Jev.noul("2"),
+                    Jev.noul("3"),
+                    Jev.noul("4"),
+                    Jev.noul("5"),
+                    Jev.noul("6"),
+                    Jev.noul("7"),
+                    Jev.noul("8"));
+    assertEquals(
+        List.of(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8),
+        result.map(
+            (a, b, c, d, e, f, g, h) ->
+                List.of(
+                    a.probabilityTrue(),
+                    b.probabilityTrue(),
+                    c.probabilityTrue(),
+                    d.probabilityTrue(),
+                    e.probabilityTrue(),
+                    f.probabilityTrue(),
+                    g.probabilityTrue(),
+                    h.probabilityTrue())));
+    assertEquals(0.8, result.answer8().probabilityTrue());
+
+    response.set(
+        "{\"model\":\"m\",\"answers\":{\"question1\":"
+            + answer
+            + "},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    assertThrows(
+        JevEvaluationException.class,
+        () -> evaluator().evaluate("state", Jev.noul("1"), Jev.noul("2")));
+    response.set(
+        "{\"model\":\"m\",\"answers\":{\"question1\":"
+            + answer
+            + ",\"question2\":{\"type\":\"score\",\"score\":0}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    assertThrows(
+        JevEvaluationException.class,
+        () -> evaluator().evaluate("state", Jev.noul("1"), Jev.noul("2")));
+  }
+
+  @Test
   void malformedAndHttpFailuresAreTypedAndSanitized() throws Exception {
     response.set("{\"private\":\"SENTINEL\"}");
     JevEvaluationException malformed =

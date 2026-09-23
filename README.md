@@ -283,8 +283,21 @@ caller-supplied HTTP client. HTTP, network, and malformed-response failures rais
 Error messages omit provider response bodies. API keys must use bearer-token-safe characters and
 are neither trimmed nor included in validation errors or their cause chains.
 
-Evaluation is synchronous, with **one question and String state per request**. Structured state,
-batching, streaming, and automatic retries are not supported yet.
+Evaluation is synchronous and accepts one question or two through eight typed questions with the
+same String state. A multi-question evaluation uses one request and carries one set of metadata:
+
+```java
+record RoutingDecision(NoulAnswer refund, ChoiceAnswer<Department> department) {}
+
+JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>> evaluation =
+    configured.evaluate("Please refund this order.", refundRequested, department);
+RoutingDecision decision = evaluation.map(RoutingDecision::new);
+```
+
+The result exposes `answer1()` through `answerN()` in question order, plus request-level model,
+usage, ID, and provider metadata. Mapping runs locally and preserves the answer types; use their
+acceptance helpers before acting on uncertain results. Structured state, streaming, automatic retries, and more than
+eight questions per request are not supported.
 
 ## Spring Boot
 
@@ -344,6 +357,11 @@ The pre-release evaluator argument order also changed: use `evaluate(state, ques
 `evaluateWithMetadata(state, question)`.
 
 ## Testing and CI
+
+After changing the generated arity-specific API, run
+`python3 jev4j-core/generate-multi-evaluations.py && ./mvnw -pl jev4j-core fmt:format`; generated
+source is checked in. Run those commands on a clean checkout followed by `git diff --exit-code` as
+the regeneration check.
 
 [Offline CI](.github/workflows/ci.yml) runs on pushes and pull requests. The standalone
 `consumer-tests` project exercises installed artifacts through public APIs and a real local HTTP

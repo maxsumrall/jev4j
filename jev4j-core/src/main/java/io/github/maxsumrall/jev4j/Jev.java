@@ -25,6 +25,10 @@ public final class Jev {
 
   public interface ScoreLevel extends Described {}
 
+  /** A question whose evaluation produces an answer of type {@code A}. */
+  public sealed interface Question<A>
+      permits NoulQuestion, ChoiceQuestion, EnumScoreQuestion, ScoreQuestion {}
+
   /** Declares a Noul with the inclusive default threshold {@value #DEFAULT_NOUL_THRESHOLD}. */
   public static NoulQuestion noul(String instructions) {
     return new NoulQuestion(text(instructions, "instructions"), Map.of());
@@ -47,7 +51,8 @@ public final class Jev {
   }
 
   public record NoulQuestion(
-      String instructions, Map<Boolean, String> descriptions, double threshold) {
+      String instructions, Map<Boolean, String> descriptions, double threshold)
+      implements Question<NoulAnswer> {
     /**
      * Creates a question with the default inclusive threshold of {@value #DEFAULT_NOUL_THRESHOLD}.
      */
@@ -102,7 +107,7 @@ public final class Jev {
     }
   }
 
-  public static final class ChoiceQuestion<E extends Enum<E>> {
+  public static final class ChoiceQuestion<E extends Enum<E>> implements Question<ChoiceAnswer<E>> {
     private final Class<E> optionType;
     private final String instructions;
     private final Map<E, String> descriptions;
@@ -222,7 +227,8 @@ public final class Jev {
     }
   }
 
-  public static final class EnumScoreQuestion<E extends Enum<E>> {
+  public static final class EnumScoreQuestion<E extends Enum<E>>
+      implements Question<EnumScoreAnswer<E>> {
     private final Class<E> levelType;
     private final String instructions;
     private final Map<E, String> descriptions;
@@ -356,7 +362,8 @@ public final class Jev {
     }
   }
 
-  public record ScoreQuestion(String instructions, List<String> levels, double minConfidence) {
+  public record ScoreQuestion(String instructions, List<String> levels, double minConfidence)
+      implements Question<ScoreAnswer> {
     public ScoreQuestion(String instructions, List<String> levels, double minConfidence) {
       this.instructions = text(instructions, "instructions");
       this.levels = List.copyOf(levels);

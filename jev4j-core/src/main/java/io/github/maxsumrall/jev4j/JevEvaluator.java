@@ -19,7 +19,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-/** Immutable, thread-safe HTTP client for evaluating one Jev question at a time. */
+/** Immutable, thread-safe HTTP client for evaluating Jev questions. */
 public final class JevEvaluator {
   public static final URI TYPESAFE_BASE_URI = URI.create("https://api.typesafe.ai");
   public static final URI OPENROUTER_BASE_URI = URI.create("https://openrouter.ai/api");
@@ -74,84 +74,46 @@ public final class JevEvaluator {
   }
 
   public Evaluation<Jev.NoulAnswer> evaluateWithMetadata(String state, Jev.NoulQuestion question) {
-    Objects.requireNonNull(question, "question");
-    return exchange(
-        questionNode("noul", question.instructions(), noulCriteria(question.descriptions())),
-        state,
-        answer -> {
-          requireType(answer, "noul");
-          return question.answer(requiredProbability(answer, "noul"));
-        });
+    return evaluateQuestion(state, question);
   }
 
   public <E extends Enum<E>> Evaluation<Jev.ChoiceAnswer<E>> evaluateWithMetadata(
       String state, Jev.ChoiceQuestion<E> question) {
-    Objects.requireNonNull(question, "question");
-    ObjectNode criteria = JSON.createObjectNode();
-    question.descriptions().forEach((key, value) -> criteria.put(key.name(), value));
-    return exchange(
-        questionNode("choice", question.instructions(), criteria),
-        state,
-        answer -> {
-          requireType(answer, "choice");
-          String selected = requiredText(answer, "choice");
-          E value;
-          try {
-            value = Enum.valueOf(question.optionType(), selected);
-          } catch (IllegalArgumentException e) {
-            throw malformed("choice is not one of the declared options");
-          }
-          Map<E, Double> probabilities = enumProbabilities(answer, question.optionType());
-          return question.answer(value, probabilities, requiredProbability(answer, "confidence"));
-        });
+    return evaluateQuestion(state, question);
   }
 
   public <E extends Enum<E>> Evaluation<Jev.EnumScoreAnswer<E>> evaluateWithMetadata(
       String state, Jev.EnumScoreQuestion<E> question) {
-    Objects.requireNonNull(question, "question");
-    ArrayNode criteria = JSON.createArrayNode();
-    for (E level : question.levelType().getEnumConstants())
-      criteria.add(question.descriptions().get(level));
-    return exchange(
-        questionNode("score", question.instructions(), criteria),
-        state,
-        answer -> {
-          requireType(answer, "score");
-          List<Double> values =
-              indexedProbabilities(answer, question.levelType().getEnumConstants().length);
-          Map<E, Double> probabilities = new EnumMap<>(question.levelType());
-          E[] levels = question.levelType().getEnumConstants();
-          for (int i = 0; i < levels.length; i++) probabilities.put(levels[i], values.get(i));
-          return question.answer(
-              requiredNumber(answer, "score"),
-              probabilities,
-              requiredProbability(answer, "confidence"));
-        });
+    return evaluateQuestion(state, question);
   }
 
   public Evaluation<Jev.ScoreAnswer> evaluateWithMetadata(
       String state, Jev.ScoreQuestion question) {
-    Objects.requireNonNull(question, "question");
-    ArrayNode criteria = JSON.createArrayNode();
-    question.levels().forEach(criteria::add);
-    return exchange(
-        questionNode("score", question.instructions(), criteria),
-        state,
-        answer -> {
-          requireType(answer, "score");
-          return question.answer(
-              requiredNumber(answer, "score"),
-              indexedProbabilities(answer, question.levels().size()),
-              requiredProbability(answer, "confidence"));
-        });
+    return evaluateQuestion(state, question);
   }
 
-  private <T> Evaluation<T> exchange(ObjectNode question, String state, AnswerDecoder<T> decoder) {
+  private <A> Evaluation<A> evaluateQuestion(String state, Jev.Question<A> question) {
+    Prepared<A> prepared = prepare(question);
+    Evaluation<List<Object>> result = exchange(List.of(prepared), state, QUESTION_KEY);
+    return new Evaluation<>(
+        prepared.cast(result.answer().get(0)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  private Evaluation<List<Object>> exchange(
+      List<Prepared<?>> preparedQuestions, String state, String firstKey) {
     Objects.requireNonNull(state, "state");
     ObjectNode root = JSON.createObjectNode();
     root.put("state", state);
     root.put("model", model);
-    root.putObject("questions").set(QUESTION_KEY, question);
+    ObjectNode questions = root.putObject("questions");
+    for (int i = 0; i < preparedQuestions.size(); i++) {
+      String key = preparedQuestions.size() == 1 ? firstKey : "question" + (i + 1);
+      questions.set(key, preparedQuestions.get(i).node());
+    }
     HttpRequest request =
         HttpRequest.newBuilder(endpoint)
             .timeout(timeout)
@@ -176,10 +138,14 @@ public final class JevEvaluator {
       if (body == null || !body.isObject()) throw malformed("response must be a JSON object");
       JsonNode answers = body.get("answers");
       if (answers == null || !answers.isObject()) throw malformed("missing object 'answers'");
-      JsonNode answer = answers.get(QUESTION_KEY);
-      if (answer == null || !answer.isObject())
-        throw malformed("missing answer for '" + QUESTION_KEY + "'");
-      T value = decoder.decode(answer);
+      List<Object> values = new ArrayList<>();
+      for (int i = 0; i < preparedQuestions.size(); i++) {
+        String key = preparedQuestions.size() == 1 ? firstKey : "question" + (i + 1);
+        JsonNode answer = answers.get(key);
+        if (answer == null || !answer.isObject())
+          throw malformed("missing answer for '" + key + "'");
+        values.add(preparedQuestions.get(i).decoder().decode(answer));
+      }
       String responseModel = requiredText(body, "model");
       JsonNode usageNode = body.get("usage");
       if (usageNode == null || !usageNode.isObject()) throw malformed("missing object 'usage'");
@@ -189,13 +155,96 @@ public final class JevEvaluator {
               requiredLong(usageNode, "output_tokens"),
               optionalFinite(usageNode, "cost"));
       return new Evaluation<>(
-          value, responseModel, usage, optionalText(body, "id"), optionalText(body, "provider"));
+          List.copyOf(values),
+          responseModel,
+          usage,
+          optionalText(body, "id"),
+          optionalText(body, "provider"));
     } catch (JacksonException e) {
       // Jackson's exception and cause messages can quote arbitrary response content.
       throw malformed("invalid JSON");
     } catch (IllegalArgumentException e) {
       throw malformed("invalid evaluation response");
     }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <A> Prepared<A> prepare(Jev.Question<A> question) {
+    Objects.requireNonNull(question, "question");
+    if (question instanceof Jev.NoulQuestion noul) {
+      return (Prepared<A>)
+          new Prepared<>(
+              questionNode("noul", noul.instructions(), noulCriteria(noul.descriptions())),
+              answer -> {
+                requireType(answer, "noul");
+                return noul.answer(requiredProbability(answer, "noul"));
+              },
+              Jev.NoulAnswer.class);
+    }
+    if (question instanceof Jev.ChoiceQuestion<?> choice)
+      return (Prepared<A>) prepareChoice(choice);
+    if (question instanceof Jev.EnumScoreQuestion<?> score)
+      return (Prepared<A>) prepareEnumScore(score);
+    if (question instanceof Jev.ScoreQuestion score) {
+      ArrayNode criteria = JSON.createArrayNode();
+      score.levels().forEach(criteria::add);
+      return (Prepared<A>)
+          new Prepared<>(
+              questionNode("score", score.instructions(), criteria),
+              answer -> {
+                requireType(answer, "score");
+                return score.answer(
+                    requiredNumber(answer, "score"),
+                    indexedProbabilities(answer, score.levels().size()),
+                    requiredProbability(answer, "confidence"));
+              },
+              Jev.ScoreAnswer.class);
+    }
+    throw new IllegalArgumentException("unsupported question type");
+  }
+
+  private static <E extends Enum<E>> Prepared<Jev.ChoiceAnswer<E>> prepareChoice(
+      Jev.ChoiceQuestion<E> question) {
+    ObjectNode criteria = JSON.createObjectNode();
+    question.descriptions().forEach((key, value) -> criteria.put(key.name(), value));
+    return new Prepared<>(
+        questionNode("choice", question.instructions(), criteria),
+        answer -> {
+          requireType(answer, "choice");
+          E value;
+          try {
+            value = Enum.valueOf(question.optionType(), requiredText(answer, "choice"));
+          } catch (IllegalArgumentException e) {
+            throw malformed("choice is not one of the declared options");
+          }
+          return question.answer(
+              value,
+              enumProbabilities(answer, question.optionType()),
+              requiredProbability(answer, "confidence"));
+        },
+        Jev.ChoiceAnswer.class);
+  }
+
+  private static <E extends Enum<E>> Prepared<Jev.EnumScoreAnswer<E>> prepareEnumScore(
+      Jev.EnumScoreQuestion<E> question) {
+    ArrayNode criteria = JSON.createArrayNode();
+    for (E level : question.levelType().getEnumConstants())
+      criteria.add(question.descriptions().get(level));
+    return new Prepared<>(
+        questionNode("score", question.instructions(), criteria),
+        answer -> {
+          requireType(answer, "score");
+          List<Double> values =
+              indexedProbabilities(answer, question.levelType().getEnumConstants().length);
+          Map<E, Double> probabilities = new EnumMap<>(question.levelType());
+          E[] levels = question.levelType().getEnumConstants();
+          for (int i = 0; i < levels.length; i++) probabilities.put(levels[i], values.get(i));
+          return question.answer(
+              requiredNumber(answer, "score"),
+              probabilities,
+              requiredProbability(answer, "confidence"));
+        },
+        Jev.EnumScoreAnswer.class);
   }
 
   private static ObjectNode questionNode(String type, String instructions, JsonNode criteria) {
@@ -282,6 +331,481 @@ public final class JevEvaluator {
   private static JevEvaluationException malformed(String message) {
     return new JevEvaluationException("malformed evaluation response: " + message);
   }
+
+  private record Prepared<A>(ObjectNode node, AnswerDecoder<A> decoder, Class<?> answerType) {
+    private Prepared {
+      Objects.requireNonNull(node, "node");
+      Objects.requireNonNull(decoder, "decoder");
+      Objects.requireNonNull(answerType, "answerType");
+    }
+
+    private A cast(Object answer) {
+      Object checked = answerType.cast(answer);
+      return decoderTypeCast(checked);
+    }
+
+    @SuppressWarnings("unchecked")
+    private A decoderTypeCast(Object answer) {
+      return (A) answer;
+    }
+  }
+
+  // BEGIN GENERATED MULTI-QUESTION API
+
+  public <A1, A2> Evaluation2<A1, A2> evaluate(
+      String state, Jev.Question<A1> question1, Jev.Question<A2> question2) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Evaluation<List<Object>> result = exchange(List.of(prepared1, prepared2), state, "question1");
+    return new Evaluation2<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function2<A1, A2, R> {
+    R apply(A1 answer1, A2 answer2);
+  }
+
+  public record Evaluation2<A1, A2>(
+      A1 answer1,
+      A2 answer2,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation2 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(Function2<? super A1, ? super A2, ? extends R> mapper) {
+      return Objects.requireNonNull(mapper, "mapper").apply(answer1, answer2);
+    }
+  }
+
+  public <A1, A2, A3> Evaluation3<A1, A2, A3> evaluate(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Evaluation<List<Object>> result =
+        exchange(List.of(prepared1, prepared2, prepared3), state, "question1");
+    return new Evaluation3<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        prepared3.cast(result.answer().get(2)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function3<A1, A2, A3, R> {
+    R apply(A1 answer1, A2 answer2, A3 answer3);
+  }
+
+  public record Evaluation3<A1, A2, A3>(
+      A1 answer1,
+      A2 answer2,
+      A3 answer3,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation3 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(answer3, "answer3");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(Function3<? super A1, ? super A2, ? super A3, ? extends R> mapper) {
+      return Objects.requireNonNull(mapper, "mapper").apply(answer1, answer2, answer3);
+    }
+  }
+
+  public <A1, A2, A3, A4> Evaluation4<A1, A2, A3, A4> evaluate(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Evaluation<List<Object>> result =
+        exchange(List.of(prepared1, prepared2, prepared3, prepared4), state, "question1");
+    return new Evaluation4<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        prepared3.cast(result.answer().get(2)),
+        prepared4.cast(result.answer().get(3)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function4<A1, A2, A3, A4, R> {
+    R apply(A1 answer1, A2 answer2, A3 answer3, A4 answer4);
+  }
+
+  public record Evaluation4<A1, A2, A3, A4>(
+      A1 answer1,
+      A2 answer2,
+      A3 answer3,
+      A4 answer4,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation4 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(answer3, "answer3");
+      Objects.requireNonNull(answer4, "answer4");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(
+        Function4<? super A1, ? super A2, ? super A3, ? super A4, ? extends R> mapper) {
+      return Objects.requireNonNull(mapper, "mapper").apply(answer1, answer2, answer3, answer4);
+    }
+  }
+
+  public <A1, A2, A3, A4, A5> Evaluation5<A1, A2, A3, A4, A5> evaluate(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Evaluation<List<Object>> result =
+        exchange(
+            List.of(prepared1, prepared2, prepared3, prepared4, prepared5), state, "question1");
+    return new Evaluation5<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        prepared3.cast(result.answer().get(2)),
+        prepared4.cast(result.answer().get(3)),
+        prepared5.cast(result.answer().get(4)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function5<A1, A2, A3, A4, A5, R> {
+    R apply(A1 answer1, A2 answer2, A3 answer3, A4 answer4, A5 answer5);
+  }
+
+  public record Evaluation5<A1, A2, A3, A4, A5>(
+      A1 answer1,
+      A2 answer2,
+      A3 answer3,
+      A4 answer4,
+      A5 answer5,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation5 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(answer3, "answer3");
+      Objects.requireNonNull(answer4, "answer4");
+      Objects.requireNonNull(answer5, "answer5");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(
+        Function5<? super A1, ? super A2, ? super A3, ? super A4, ? super A5, ? extends R> mapper) {
+      return Objects.requireNonNull(mapper, "mapper")
+          .apply(answer1, answer2, answer3, answer4, answer5);
+    }
+  }
+
+  public <A1, A2, A3, A4, A5, A6> Evaluation6<A1, A2, A3, A4, A5, A6> evaluate(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5,
+      Jev.Question<A6> question6) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Prepared<A6> prepared6 = prepare(question6);
+    Evaluation<List<Object>> result =
+        exchange(
+            List.of(prepared1, prepared2, prepared3, prepared4, prepared5, prepared6),
+            state,
+            "question1");
+    return new Evaluation6<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        prepared3.cast(result.answer().get(2)),
+        prepared4.cast(result.answer().get(3)),
+        prepared5.cast(result.answer().get(4)),
+        prepared6.cast(result.answer().get(5)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function6<A1, A2, A3, A4, A5, A6, R> {
+    R apply(A1 answer1, A2 answer2, A3 answer3, A4 answer4, A5 answer5, A6 answer6);
+  }
+
+  public record Evaluation6<A1, A2, A3, A4, A5, A6>(
+      A1 answer1,
+      A2 answer2,
+      A3 answer3,
+      A4 answer4,
+      A5 answer5,
+      A6 answer6,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation6 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(answer3, "answer3");
+      Objects.requireNonNull(answer4, "answer4");
+      Objects.requireNonNull(answer5, "answer5");
+      Objects.requireNonNull(answer6, "answer6");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(
+        Function6<
+                ? super A1, ? super A2, ? super A3, ? super A4, ? super A5, ? super A6, ? extends R>
+            mapper) {
+      return Objects.requireNonNull(mapper, "mapper")
+          .apply(answer1, answer2, answer3, answer4, answer5, answer6);
+    }
+  }
+
+  public <A1, A2, A3, A4, A5, A6, A7> Evaluation7<A1, A2, A3, A4, A5, A6, A7> evaluate(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5,
+      Jev.Question<A6> question6,
+      Jev.Question<A7> question7) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Prepared<A6> prepared6 = prepare(question6);
+    Prepared<A7> prepared7 = prepare(question7);
+    Evaluation<List<Object>> result =
+        exchange(
+            List.of(prepared1, prepared2, prepared3, prepared4, prepared5, prepared6, prepared7),
+            state,
+            "question1");
+    return new Evaluation7<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        prepared3.cast(result.answer().get(2)),
+        prepared4.cast(result.answer().get(3)),
+        prepared5.cast(result.answer().get(4)),
+        prepared6.cast(result.answer().get(5)),
+        prepared7.cast(result.answer().get(6)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function7<A1, A2, A3, A4, A5, A6, A7, R> {
+    R apply(A1 answer1, A2 answer2, A3 answer3, A4 answer4, A5 answer5, A6 answer6, A7 answer7);
+  }
+
+  public record Evaluation7<A1, A2, A3, A4, A5, A6, A7>(
+      A1 answer1,
+      A2 answer2,
+      A3 answer3,
+      A4 answer4,
+      A5 answer5,
+      A6 answer6,
+      A7 answer7,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation7 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(answer3, "answer3");
+      Objects.requireNonNull(answer4, "answer4");
+      Objects.requireNonNull(answer5, "answer5");
+      Objects.requireNonNull(answer6, "answer6");
+      Objects.requireNonNull(answer7, "answer7");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(
+        Function7<
+                ? super A1,
+                ? super A2,
+                ? super A3,
+                ? super A4,
+                ? super A5,
+                ? super A6,
+                ? super A7,
+                ? extends R>
+            mapper) {
+      return Objects.requireNonNull(mapper, "mapper")
+          .apply(answer1, answer2, answer3, answer4, answer5, answer6, answer7);
+    }
+  }
+
+  public <A1, A2, A3, A4, A5, A6, A7, A8> Evaluation8<A1, A2, A3, A4, A5, A6, A7, A8> evaluate(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5,
+      Jev.Question<A6> question6,
+      Jev.Question<A7> question7,
+      Jev.Question<A8> question8) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Prepared<A6> prepared6 = prepare(question6);
+    Prepared<A7> prepared7 = prepare(question7);
+    Prepared<A8> prepared8 = prepare(question8);
+    Evaluation<List<Object>> result =
+        exchange(
+            List.of(
+                prepared1, prepared2, prepared3, prepared4, prepared5, prepared6, prepared7,
+                prepared8),
+            state,
+            "question1");
+    return new Evaluation8<>(
+        prepared1.cast(result.answer().get(0)),
+        prepared2.cast(result.answer().get(1)),
+        prepared3.cast(result.answer().get(2)),
+        prepared4.cast(result.answer().get(3)),
+        prepared5.cast(result.answer().get(4)),
+        prepared6.cast(result.answer().get(5)),
+        prepared7.cast(result.answer().get(6)),
+        prepared8.cast(result.answer().get(7)),
+        result.model(),
+        result.usage(),
+        result.id(),
+        result.provider());
+  }
+
+  @FunctionalInterface
+  public interface Function8<A1, A2, A3, A4, A5, A6, A7, A8, R> {
+    R apply(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        A4 answer4,
+        A5 answer5,
+        A6 answer6,
+        A7 answer7,
+        A8 answer8);
+  }
+
+  public record Evaluation8<A1, A2, A3, A4, A5, A6, A7, A8>(
+      A1 answer1,
+      A2 answer2,
+      A3 answer3,
+      A4 answer4,
+      A5 answer5,
+      A6 answer6,
+      A7 answer7,
+      A8 answer8,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider) {
+    public Evaluation8 {
+      Objects.requireNonNull(answer1, "answer1");
+      Objects.requireNonNull(answer2, "answer2");
+      Objects.requireNonNull(answer3, "answer3");
+      Objects.requireNonNull(answer4, "answer4");
+      Objects.requireNonNull(answer5, "answer5");
+      Objects.requireNonNull(answer6, "answer6");
+      Objects.requireNonNull(answer7, "answer7");
+      Objects.requireNonNull(answer8, "answer8");
+      Objects.requireNonNull(model, "model");
+      Objects.requireNonNull(usage, "usage");
+      Objects.requireNonNull(id, "id");
+      Objects.requireNonNull(provider, "provider");
+    }
+
+    public <R> R map(
+        Function8<
+                ? super A1,
+                ? super A2,
+                ? super A3,
+                ? super A4,
+                ? super A5,
+                ? super A6,
+                ? super A7,
+                ? super A8,
+                ? extends R>
+            mapper) {
+      return Objects.requireNonNull(mapper, "mapper")
+          .apply(answer1, answer2, answer3, answer4, answer5, answer6, answer7, answer8);
+    }
+  }
+
+  // END GENERATED MULTI-QUESTION API
 
   private interface AnswerDecoder<T> {
     T decode(JsonNode answer);

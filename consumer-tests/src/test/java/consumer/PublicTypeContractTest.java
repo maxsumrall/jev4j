@@ -32,6 +32,15 @@ final class PublicTypeContractTest {
     assertFalse(
         compiles(
             "import io.github.maxsumrall.jev4j.*; class T { void f(JevEvaluator e) { e.evaluate(Jev.noul(\"question\"), \"state\"); } }"));
+    assertTrue(
+        compiles(
+            "import io.github.maxsumrall.jev4j.*; class T { record D(boolean x, double y) {} D f(JevEvaluator e) { return e.evaluate(\"s\", Jev.noul(\"x\"), Jev.score(\"y\").level(\"a\").level(\"b\").build()).map((Jev.NoulAnswer x, Jev.ScoreAnswer y) -> new D(x.isTrue(), y.value())); } }"));
+    assertFalse(
+        compiles(
+            "import io.github.maxsumrall.jev4j.*; class T { void f(JevEvaluator e) { JevEvaluator.Evaluation2<Jev.ScoreAnswer,Jev.NoulAnswer> x = e.evaluate(\"s\", Jev.noul(\"x\"), Jev.score(\"y\").level(\"a\").level(\"b\").build()); } }"));
+    assertFalse(
+        compiles(
+            "import io.github.maxsumrall.jev4j.*; class T { void f(JevEvaluator e) { e.evaluate(\"s\", Jev.noul(\"x\"), Jev.score(\"y\").level(\"a\").level(\"b\").build()).map((Jev.ScoreAnswer x, Jev.NoulAnswer y) -> x.value()); } }"));
   }
 
   private boolean compiles(String source) {
