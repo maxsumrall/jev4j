@@ -7,9 +7,14 @@ on:
         description: 'Existing release tag, e.g. v0.1.0 (publishing is irreversible)'
         required: true
         type: string
+      commit:
+        description: Approved full 40-character release commit SHA
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: maven-central-release
@@ -30,10 +35,16 @@ jobs:
       - name: Validate and check out release tag
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}"
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             ! [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Expected a vX.Y.Z tag and a full lowercase 40-character commit SHA." >&2
+            exit 1
+          fi
+          tag_commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$tag_commit" = "$RELEASE_COMMIT"
           git merge-base --is-ancestor "refs/tags/$RELEASE_TAG^{commit}" origin/main
           git checkout --detach "refs/tags/$RELEASE_TAG"
           test -s LICENSE
@@ -58,6 +69,27 @@ jobs:
                       actual = dep.findtext('m:version', namespaces=ns)
                       assert actual in (version, '${project.version}'), f'{path}: stale library version {actual}'
           PY
+      - name: Require successful CI for the approved commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          for workflow in ci.yml openrouter-component.yml; do
+            if ! runs="$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?head_sha=$RELEASE_COMMIT&branch=main&event=push&per_page=1")"; then
+              echo "Cannot verify $workflow for $RELEASE_COMMIT; refusing publication." >&2
+              exit 1
+            fi
+            if ! jq -e --arg sha "$RELEASE_COMMIT" '
+              .workflow_runs[0] |
+              .head_sha == $sha and .head_branch == "main" and .event == "push" and
+              .status == "completed" and .conclusion == "success"
+            ' <<< "$runs" >/dev/null; then
+              echo "Latest main push run of $workflow must succeed for $RELEASE_COMMIT." >&2
+              exit 1
+            fi
+          done
       - name: Set up Java and Central credentials
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
