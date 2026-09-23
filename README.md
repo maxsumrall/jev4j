@@ -521,3 +521,7 @@ Example projects disable deployment.
 - [Confidence versus probability](https://docs.typesafe.ai/confidence)
 - [Jev through OpenRouter](https://openrouter.ai/docs/guides/community/typesafe-sdk)
 - [Picnic Error Prone Support](https://github.com/PicnicSupermarket/error-prone-support), our build-tooling reference
+
+## License
+
+[MIT](LICENSE). The published library JARs include the license notice.

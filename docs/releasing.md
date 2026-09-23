@@ -11,10 +11,9 @@ entry after Central makes the release available.
    Verify ownership of the `io.github.maxsumrall` namespace and generate a
    [publishing token](https://central.sonatype.org/publish/generate-portal-token/).
    Use the token's username and password, not your account password.
-2. Choose the project's license. Commit its text as `LICENSE` and set
-   `project.license.name` and `project.license.url` in the root POM's properties.
-   The URL must be HTTPS. These properties are intentionally unset until the
-   maintainer chooses the license; the release profile rejects missing values.
+2. The project uses the [MIT License](../LICENSE). The root POM declares matching
+   license metadata, and both library JARs include `META-INF/LICENSE`.
+   Preserve these notices when preparing a release.
 3. Create a passphrase-protected OpenPGP signing key. Publish its public key to a
    [Central-supported keyserver](https://central.sonatype.org/publish/requirements/gpg/).
    Back up the private key and revocation certificate outside GitHub.
