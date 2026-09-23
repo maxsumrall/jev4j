@@ -7,7 +7,7 @@
   <!-- Deliberately standalone: this example has no parent and is not a root module. -->
   <groupId>io.github.maxsumrall.jev4j.examples</groupId>
   <artifactId>plain-java-example</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
@@ -21,7 +21,7 @@
     <dependency>
       <groupId>io.github.maxsumrall.jev4j</groupId>
       <artifactId>jev4j-core</artifactId>
-      <version>0.1.0-SNAPSHOT</version>
+      <version>0.1.0</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>

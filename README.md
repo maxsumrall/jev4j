@@ -33,8 +33,8 @@ returns `true` when the probability of yes is at least `0.5`. Override the cutof
 - TypeSafe and OpenRouter through the JDK HTTP client; Jackson 3 stays internal.
 - Optional Spring Boot 4 starter. No Spring dependency in core.
 
-**Early development.** Requires Java 17; the API may change. Install the snapshot from source
-until Maven Central releases are available.
+**Early development.** Requires Java 17; the API may change. The first release is `0.1.0`. Until it is published to Maven Central, install it
+from source using the instructions below.
 
 ## Get started
 
@@ -50,7 +50,7 @@ Then add the core library to your application:
 <dependency>
   <groupId>io.github.maxsumrall.jev4j</groupId>
   <artifactId>jev4j-core</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 </dependency>
 ```
 
@@ -479,7 +479,7 @@ Use `jev4j-spring-boot-starter` instead of the core dependency in a Spring Boot 
 <dependency>
   <groupId>io.github.maxsumrall.jev4j</groupId>
   <artifactId>jev4j-spring-boot-starter</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 </dependency>
 ```
 

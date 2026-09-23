@@ -7,7 +7,7 @@
   <!-- Deliberately standalone: this example has no parent and is not a root module. -->
   <groupId>io.github.maxsumrall.jev4j.examples</groupId>
   <artifactId>spring-boot-triage</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 
   <properties>
     <java.version>17</java.version>
@@ -34,7 +34,7 @@
     <dependency>
       <groupId>io.github.maxsumrall.jev4j</groupId>
       <artifactId>jev4j-spring-boot-starter</artifactId>
-      <version>0.1.0-SNAPSHOT</version>
+      <version>0.1.0</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
