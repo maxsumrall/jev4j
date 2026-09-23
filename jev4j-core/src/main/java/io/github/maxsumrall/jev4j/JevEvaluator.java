@@ -1,10 +1,12 @@
 package io.github.maxsumrall.jev4j;
 
+import io.github.maxsumrall.jev4j.JevEvaluationException.FailureCategory;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -13,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -100,7 +103,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   private Evaluation<List<Object>> exchange(
@@ -126,13 +130,29 @@ public final class JevEvaluator {
       response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new JevEvaluationException("evaluation interrupted", e);
+      throw new JevEvaluationException(
+          "evaluation interrupted",
+          FailureCategory.INTERRUPTED,
+          OptionalInt.empty(),
+          Optional.empty());
+    } catch (HttpTimeoutException e) {
+      throw new JevEvaluationException(
+          "evaluation request timed out",
+          FailureCategory.TIMEOUT,
+          OptionalInt.empty(),
+          Optional.empty());
     } catch (IOException e) {
-      throw new JevEvaluationException("evaluation request failed", e);
+      throw new JevEvaluationException(
+          "evaluation request failed", FailureCategory.IO, OptionalInt.empty(), Optional.empty());
     }
+    Optional<String> requestId =
+        response.headers().firstValue("x-typesafe-request-id").filter(value -> !value.isBlank());
     if (response.statusCode() < 200 || response.statusCode() >= 300)
       throw new JevEvaluationException(
-          "evaluation failed with HTTP status " + response.statusCode(), response.statusCode());
+          "evaluation failed with HTTP status " + response.statusCode(),
+          FailureCategory.HTTP,
+          OptionalInt.of(response.statusCode()),
+          requestId);
     try {
       JsonNode body = JSON.readTree(response.body());
       if (body == null || !body.isObject()) throw malformed("response must be a JSON object");
@@ -159,12 +179,27 @@ public final class JevEvaluator {
           responseModel,
           usage,
           optionalText(body, "id"),
-          optionalText(body, "provider"));
+          optionalText(body, "provider"),
+          requestId);
+    } catch (JevEvaluationException e) {
+      throw new JevEvaluationException(
+          Objects.requireNonNull(e.getMessage()),
+          FailureCategory.MALFORMED_RESPONSE,
+          OptionalInt.empty(),
+          requestId);
     } catch (JacksonException e) {
       // Jackson's exception and cause messages can quote arbitrary response content.
-      throw malformed("invalid JSON");
+      throw new JevEvaluationException(
+          "malformed evaluation response: invalid JSON",
+          FailureCategory.MALFORMED_RESPONSE,
+          OptionalInt.empty(),
+          requestId);
     } catch (IllegalArgumentException e) {
-      throw malformed("invalid evaluation response");
+      throw new JevEvaluationException(
+          "malformed evaluation response: invalid evaluation response",
+          FailureCategory.MALFORMED_RESPONSE,
+          OptionalInt.empty(),
+          requestId);
     }
   }
 
@@ -363,7 +398,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -377,7 +413,18 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation2(
+        A1 answer1,
+        A2 answer2,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(answer1, answer2, model, usage, id, provider, Optional.empty());
+    }
+
     public Evaluation2 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -385,6 +432,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(Function2<? super A1, ? super A2, ? extends R> mapper) {
@@ -409,7 +457,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -424,7 +473,19 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation3(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(answer1, answer2, answer3, model, usage, id, provider, Optional.empty());
+    }
+
     public Evaluation3 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -433,6 +494,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(Function3<? super A1, ? super A2, ? super A3, ? extends R> mapper) {
@@ -460,7 +522,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -476,7 +539,20 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation4(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        A4 answer4,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(answer1, answer2, answer3, answer4, model, usage, id, provider, Optional.empty());
+    }
+
     public Evaluation4 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -486,6 +562,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(
@@ -518,7 +595,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -535,7 +613,31 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation5(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        A4 answer4,
+        A5 answer5,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(
+          answer1,
+          answer2,
+          answer3,
+          answer4,
+          answer5,
+          model,
+          usage,
+          id,
+          provider,
+          Optional.empty());
+    }
+
     public Evaluation5 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -546,6 +648,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(
@@ -584,7 +687,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -602,7 +706,33 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation6(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        A4 answer4,
+        A5 answer5,
+        A6 answer6,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(
+          answer1,
+          answer2,
+          answer3,
+          answer4,
+          answer5,
+          answer6,
+          model,
+          usage,
+          id,
+          provider,
+          Optional.empty());
+    }
+
     public Evaluation6 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -614,6 +744,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(
@@ -657,7 +788,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -676,7 +808,35 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation7(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        A4 answer4,
+        A5 answer5,
+        A6 answer6,
+        A7 answer7,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(
+          answer1,
+          answer2,
+          answer3,
+          answer4,
+          answer5,
+          answer6,
+          answer7,
+          model,
+          usage,
+          id,
+          provider,
+          Optional.empty());
+    }
+
     public Evaluation7 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -689,6 +849,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(
@@ -744,7 +905,8 @@ public final class JevEvaluator {
         result.model(),
         result.usage(),
         result.id(),
-        result.provider());
+        result.provider(),
+        result.requestId());
   }
 
   @FunctionalInterface
@@ -772,7 +934,37 @@ public final class JevEvaluator {
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation8(
+        A1 answer1,
+        A2 answer2,
+        A3 answer3,
+        A4 answer4,
+        A5 answer5,
+        A6 answer6,
+        A7 answer7,
+        A8 answer8,
+        String model,
+        Usage usage,
+        Optional<String> id,
+        Optional<String> provider) {
+      this(
+          answer1,
+          answer2,
+          answer3,
+          answer4,
+          answer5,
+          answer6,
+          answer7,
+          answer8,
+          model,
+          usage,
+          id,
+          provider,
+          Optional.empty());
+    }
+
     public Evaluation8 {
       Objects.requireNonNull(answer1, "answer1");
       Objects.requireNonNull(answer2, "answer2");
@@ -786,6 +978,7 @@ public final class JevEvaluator {
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
 
     public <R> R map(
@@ -822,13 +1015,24 @@ public final class JevEvaluator {
   }
 
   public record Evaluation<T>(
-      T answer, String model, Usage usage, Optional<String> id, Optional<String> provider) {
+      T answer,
+      String model,
+      Usage usage,
+      Optional<String> id,
+      Optional<String> provider,
+      Optional<String> requestId) {
+    public Evaluation(
+        T answer, String model, Usage usage, Optional<String> id, Optional<String> provider) {
+      this(answer, model, usage, id, provider, Optional.empty());
+    }
+
     public Evaluation {
       Objects.requireNonNull(answer, "answer");
       Objects.requireNonNull(model, "model");
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }
   }
 

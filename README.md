@@ -274,13 +274,28 @@ NoulAnswer result = evaluation.answer();
 String servingModel = evaluation.model();
 long tokens = evaluation.usage().inputTokens();
 java.util.OptionalDouble optionalCost = evaluation.usage().cost();
+java.util.Optional<String> requestId = evaluation.requestId();
 ```
 
 Both presets call `/v1/systemone`; OpenRouter uses the base URI `https://openrouter.ai/api`.
 Use a Jev model, not a chat-completions model. The evaluator does not retry requests or close a
 caller-supplied HTTP client. HTTP, network, and malformed-response failures raise
 `JevEvaluationException`; `httpStatusCode()` contains the numeric status only for HTTP failures.
-Error messages omit provider response bodies. API keys must use bearer-token-safe characters and
+Use `category()` to distinguish `FailureCategory.HTTP`, `TIMEOUT`, `IO` (including connection
+failures), `INTERRUPTED`, and `MALFORMED_RESPONSE`. Interruption preserves the thread's interrupt
+flag. The legacy message-only and message/cause exception constructors use `UNKNOWN`; the status
+constructor uses `HTTP`. Existing constructors remain available.
+
+Read `requestId()` on an evaluation or exception for the optional
+[`x-typesafe-request-id` response header](https://docs.typesafe.ai/sdk/javascript/api/interfaces/WithResponse).
+Missing or blank headers yield an empty optional, as do failures without a received response.
+This differs from `id()`, the response-body ID that OpenRouter documents; jev4j does not infer
+request IDs from body fields or undocumented headers. OpenRouter's System One docs do not promise
+this header. Single and multi-question results expose the same request-level `requestId()`.
+
+Evaluator-generated errors omit provider bodies and raw transport/parser causes, which may contain
+sensitive data. Request IDs stay in their accessor, outside error messages; treat them as provider
+data before logging. API keys must use bearer-token-safe characters and
 are neither trimmed nor included in validation errors or their cause chains.
 
 Evaluation is synchronous and accepts one question or two through eight typed questions with the

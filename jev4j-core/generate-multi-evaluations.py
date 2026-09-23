@@ -36,7 +36,7 @@ def generated() -> str:
 {preparations}
     Evaluation<List<Object>> result = exchange(List.of({prepared_list}), state, "question1");
     return new Evaluation{n}<>({answers},
-        result.model(), result.usage(), result.id(), result.provider());
+        result.model(), result.usage(), result.id(), result.provider(), result.requestId());
   }}
 
   @FunctionalInterface
@@ -49,13 +49,20 @@ def generated() -> str:
       String model,
       Usage usage,
       Optional<String> id,
-      Optional<String> provider) {{
+      Optional<String> provider,
+      Optional<String> requestId) {{
+    public Evaluation{n}({function_parameters}, String model, Usage usage,
+        Optional<String> id, Optional<String> provider) {{
+      this({apply}, model, usage, id, provider, Optional.empty());
+    }}
+
     public Evaluation{n} {{
 {nulls}
       Objects.requireNonNull(model, "model");
       Objects.requireNonNull(usage, "usage");
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(provider, "provider");
+      Objects.requireNonNull(requestId, "requestId");
     }}
 
     public <R> R map(Function{n}<? super {', ? super '.join(f'A{i}' for i in range(1, n + 1))}, ? extends R> mapper) {{

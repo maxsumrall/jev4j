@@ -68,6 +68,7 @@ final class PublicApiBlackBoxTest {
   private final AtomicReference<String> authorization = new AtomicReference<>();
   private final AtomicReference<String> method = new AtomicReference<>();
   private final AtomicReference<String> contentType = new AtomicReference<>();
+  private final AtomicReference<String> requestId = new AtomicReference<>();
   private final AtomicInteger requestCount = new AtomicInteger();
   private HttpServer server;
   private int status;
@@ -110,6 +111,7 @@ final class PublicApiBlackBoxTest {
     assertEquals(0.73, result.answer().probabilityTrue());
     assertTrue(result.answer().isTrue());
     assertEquals("fixture-1", result.id().orElseThrow());
+    assertTrue(result.requestId().isEmpty());
     assertEquals("local", result.provider().orElseThrow());
     assertEquals(11, result.usage().inputTokens());
     assertEquals(0.0001, result.usage().cost().orElseThrow());
@@ -206,6 +208,7 @@ final class PublicApiBlackBoxTest {
 
   @Test
   void multiQuestionCorrelatesByKeyMapsInOrderAndSharesMetadata() throws Exception {
+    requestId.set("header-batch-3");
     response.set(
         "{\"id\":\"batch-1\",\"provider\":\"local\",\"model\":\"fixture-provider\",\"answers\":{"
             + "\"question3\":{\"type\":\"score\",\"score\":1.4,\"probabilities\":{\"0\":0.1,\"1\":0.4,\"2\":0.5},\"confidence\":0.8},"
@@ -227,6 +230,7 @@ final class PublicApiBlackBoxTest {
                 new Decision(refund.isTrue(), route.value(), quality.value()));
     assertEquals(new Decision(true, Route.DELIVERY, 1.4), decision);
     assertEquals("batch-1", result.id().orElseThrow());
+    assertEquals("header-batch-3", result.requestId().orElseThrow());
     assertEquals(7, result.usage().inputTokens());
     assertEquals(before + 1, requestCount.get());
     assertEquals(
@@ -290,6 +294,7 @@ final class PublicApiBlackBoxTest {
                     g.probabilityTrue(),
                     h.probabilityTrue())));
     assertEquals(0.8, result.answer8().probabilityTrue());
+    assertTrue(result.requestId().isEmpty());
 
     response.set(
         "{\"model\":\"m\",\"answers\":{\"question1\":"
@@ -316,6 +321,8 @@ final class PublicApiBlackBoxTest {
             () -> evaluator().evaluate("SECRET_STATE", Jev.noul("x")));
     assertFalse(malformed.getMessage().contains("SENTINEL"));
     assertFalse(malformed.getMessage().contains("SECRET_STATE"));
+    assertEquals(JevEvaluationException.FailureCategory.MALFORMED_RESPONSE, malformed.category());
+    assertTrue(malformed.requestId().isEmpty());
     status = 429;
     response.set("provider secret SENTINEL");
     JevEvaluationException http =
@@ -335,6 +342,8 @@ final class PublicApiBlackBoxTest {
         assertThrows(
             JevEvaluationException.class, () -> evaluator().evaluate("SECRET", Jev.noul("x")));
     assertEquals(code, failure.httpStatusCode().orElseThrow());
+    assertEquals(JevEvaluationException.FailureCategory.HTTP, failure.category());
+    assertTrue(failure.requestId().isEmpty());
     assertFalse(failure.getMessage().contains("SENTINEL"));
     assertFalse(failure.getMessage().contains("SECRET"));
   }
@@ -349,11 +358,15 @@ final class PublicApiBlackBoxTest {
         "{\"model\":\"m\",\"answers\":{\"question\":{\"type\":\"noul\",\"noul\":1e400}},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"
       })
   void invalidNoulResponsesAreSanitizedAndHaveNoStatus(String body) {
+    requestId.set("malformed-header-id");
     response.set(body);
     JevEvaluationException failure =
         assertThrows(
             JevEvaluationException.class, () -> evaluator().evaluate("SECRET", Jev.noul("x")));
     assertTrue(failure.httpStatusCode().isEmpty());
+    assertEquals(JevEvaluationException.FailureCategory.MALFORMED_RESPONSE, failure.category());
+    assertEquals("malformed-header-id", failure.requestId().orElseThrow());
+    assertNull(failure.getCause());
     for (Throwable current = failure; current != null; current = current.getCause()) {
       assertFalse(Objects.toString(current.getMessage(), "").contains("SECRET"));
     }
@@ -361,6 +374,7 @@ final class PublicApiBlackBoxTest {
 
   @Test
   void invalidChoiceResponsesRejectUnknownIncompleteAndNonunitDistributions() throws Exception {
+    requestId.set("invalid-choice-id");
     JsonNode root = JSON.readTree(fixture("choice-response.json"));
     for (String answer :
         List.of(
@@ -375,6 +389,9 @@ final class PublicApiBlackBoxTest {
               JevEvaluationException.class,
               () -> evaluator().evaluate("state", Jev.choice(Route.class, "x")));
       assertTrue(failure.httpStatusCode().isEmpty());
+      assertEquals(JevEvaluationException.FailureCategory.MALFORMED_RESPONSE, failure.category());
+      assertEquals("invalid-choice-id", failure.requestId().orElseThrow());
+      assertNull(failure.getCause());
     }
   }
 
@@ -397,14 +414,124 @@ final class PublicApiBlackBoxTest {
     assertEquals("jev-latest", JSON.readTree(request.get()).get("model").textValue());
 
     server.stop(0);
-    assertThrows(JevEvaluationException.class, () -> base.build().evaluate("state", Jev.noul("x")));
+    JevEvaluationException connection =
+        assertThrows(
+            JevEvaluationException.class, () -> base.build().evaluate("state", Jev.noul("x")));
+    assertEquals(JevEvaluationException.FailureCategory.IO, connection.category());
+    assertTrue(connection.requestId().isEmpty());
+    assertTrue(connection.httpStatusCode().isEmpty());
+    assertNull(connection.getCause());
     server = HttpServer.create(new InetSocketAddress(0), 0);
     server.createContext("/v1/systemone", this::handle);
     server.start();
     delayMillis = 150;
     JevEvaluator timed =
         JevEvaluator.builder("key").baseUri(baseUri()).timeout(Duration.ofMillis(20)).build();
-    assertThrows(JevEvaluationException.class, () -> timed.evaluate("state", Jev.noul("x")));
+    JevEvaluationException timeout =
+        assertThrows(JevEvaluationException.class, () -> timed.evaluate("state", Jev.noul("x")));
+    assertEquals(JevEvaluationException.FailureCategory.TIMEOUT, timeout.category());
+    assertTrue(timeout.requestId().isEmpty());
+    assertTrue(timeout.httpStatusCode().isEmpty());
+    assertNull(timeout.getCause());
+  }
+
+  @Test
+  void requestIdIsSeparateFromBodyIdOnSuccessAndHttpFailure() throws Exception {
+    response.set(fixture("noul-response.json"));
+    requestId.set("header-single-id");
+    JevEvaluator.Evaluation<Jev.NoulAnswer> result =
+        evaluator().evaluateWithMetadata("state", Jev.noul("x"));
+    assertEquals("header-single-id", result.requestId().orElseThrow());
+    assertEquals("fixture-1", result.id().orElseThrow());
+    status = 503;
+    response.set("PRIVATE_BODY safe-dummy-key");
+    JevEvaluationException failure =
+        assertThrows(
+            JevEvaluationException.class,
+            () -> evaluator().evaluate("PRIVATE_STATE", Jev.noul("x")));
+    assertEquals(JevEvaluationException.FailureCategory.HTTP, failure.category());
+    assertEquals(503, failure.httpStatusCode().orElseThrow());
+    assertEquals("header-single-id", failure.requestId().orElseThrow());
+    assertEquals("evaluation failed with HTTP status 503", failure.getMessage());
+    assertNull(failure.getCause());
+  }
+
+  @Test
+  void interruptionPreservesFlagWithoutLeakingACause() {
+    JevEvaluator evaluator = evaluator();
+    Thread.currentThread().interrupt();
+    try {
+      JevEvaluationException failure =
+          assertThrows(
+              JevEvaluationException.class,
+              () -> evaluator.evaluate("PRIVATE_STATE", Jev.noul("x")));
+      assertEquals(JevEvaluationException.FailureCategory.INTERRUPTED, failure.category());
+      assertTrue(Thread.currentThread().isInterrupted());
+      assertTrue(failure.requestId().isEmpty());
+      assertTrue(failure.httpStatusCode().isEmpty());
+      assertNull(failure.getCause());
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {2, 3, 4, 5, 6, 7, 8})
+  void everyArityCarriesTheSharedHeader(int arity) {
+    StringBuilder answers = new StringBuilder();
+    for (int i = 1; i <= arity; i++) {
+      if (i > 1) answers.append(',');
+      answers.append("\"question").append(i).append("\":{\"type\":\"noul\",\"noul\":0.7}");
+    }
+    response.set(
+        "{\"model\":\"m\",\"answers\":{"
+            + answers
+            + "},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}");
+    Jev.NoulQuestion q = Jev.noul("x");
+    JevEvaluator evaluator = evaluator();
+    for (String header : List.of("shared-header", "")) {
+      requestId.set(header);
+      java.util.Optional<String> actual =
+          switch (arity) {
+            case 2 -> evaluator.evaluate("s", q, q).requestId();
+            case 3 -> evaluator.evaluate("s", q, q, q).requestId();
+            case 4 -> evaluator.evaluate("s", q, q, q, q).requestId();
+            case 5 -> evaluator.evaluate("s", q, q, q, q, q).requestId();
+            case 6 -> evaluator.evaluate("s", q, q, q, q, q, q).requestId();
+            case 7 -> evaluator.evaluate("s", q, q, q, q, q, q, q).requestId();
+            case 8 -> evaluator.evaluate("s", q, q, q, q, q, q, q, q).requestId();
+            default -> throw new AssertionError(arity);
+          };
+      assertEquals(
+          header.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of("shared-header"),
+          actual);
+    }
+  }
+
+  @Test
+  void legacyConstructorsKeepTheirContracts() {
+    JevEvaluationException plain = new JevEvaluationException("message");
+    assertEquals(JevEvaluationException.FailureCategory.UNKNOWN, plain.category());
+    assertTrue(plain.requestId().isEmpty());
+    IOException cause = new IOException("caller-owned cause");
+    JevEvaluationException caused = new JevEvaluationException("message", cause);
+    assertEquals(cause, caused.getCause());
+    assertEquals(JevEvaluationException.FailureCategory.UNKNOWN, caused.category());
+    JevEvaluationException http = new JevEvaluationException("message", 429);
+    assertEquals(JevEvaluationException.FailureCategory.HTTP, http.category());
+    assertEquals(429, http.httpStatusCode().orElseThrow());
+    assertTrue(http.requestId().isEmpty());
+    JevEvaluator.Usage usage = new JevEvaluator.Usage(1, 2, java.util.OptionalDouble.empty());
+    JevEvaluator.Evaluation<String> single =
+        new JevEvaluator.Evaluation<>(
+            "a", "m", usage, java.util.Optional.of("body-id"), java.util.Optional.empty());
+    assertEquals("body-id", single.id().orElseThrow());
+    assertTrue(single.requestId().isEmpty());
+    JevEvaluator.Evaluation2<String, Integer> multi =
+        new JevEvaluator.Evaluation2<>(
+            "a", 2, "m", usage, java.util.Optional.empty(), java.util.Optional.empty());
+    assertTrue(multi.requestId().isEmpty());
+    assertEquals(2, multi.answer2());
   }
 
   private JevEvaluator evaluator() {
@@ -432,6 +559,9 @@ final class PublicApiBlackBoxTest {
       }
     }
     byte[] bytes = response.get().getBytes(StandardCharsets.UTF_8);
+    if (requestId.get() != null)
+      exchange.getResponseHeaders().set("X-TypeSafe-Request-Id", requestId.get());
+    exchange.getResponseHeaders().set("X-Request-Id", "not-a-supported-header");
     exchange.sendResponseHeaders(status, bytes.length);
     exchange.getResponseBody().write(bytes);
     exchange.close();
