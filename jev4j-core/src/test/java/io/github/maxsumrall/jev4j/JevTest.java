@@ -160,9 +160,15 @@ final class JevTest {
     Map<Size, Double> probabilities = Map.of(Size.SMALL, 0.1, Size.MEDIUM, 0.7, Size.LARGE, 0.2);
     Jev.EnumScoreQuestion<Size> question = Jev.score(Size.class, "size").minConfidence(0.8);
 
+    Jev.EnumScoreAnswer<Size> below = question.answer(Math.nextDown(0.5), probabilities, 0.8);
+    assertEquals(Size.SMALL, below.nearestLevel());
+    assertEquals(Size.SMALL, below.acceptedLevel().orElseThrow());
     assertEquals(Size.MEDIUM, question.answer(0.5, probabilities, 0.8).nearestLevel());
+    assertEquals(Size.MEDIUM, question.answer(Math.nextUp(0.5), probabilities, 0.8).nearestLevel());
+    assertEquals(
+        Size.MEDIUM, question.answer(Math.nextDown(1.5), probabilities, 0.8).nearestLevel());
     assertEquals(Size.LARGE, question.answer(1.5, probabilities, 0.8).nearestLevel());
-    assertEquals(Size.MEDIUM, question.answer(1.49, probabilities, 0.8).nearestLevel());
+    assertEquals(Size.LARGE, question.answer(Math.nextUp(1.5), probabilities, 0.8).nearestLevel());
     // At this DTO boundary, the raw score is independent data and is not cross-checked against
     // the probability distribution's mean.
     Jev.EnumScoreAnswer<Size> fractional = question.answer(1.2, probabilities, 0.8);

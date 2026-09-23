@@ -392,7 +392,7 @@ public final class Jev {
       this.value = range(value, 0, levels.length - 1, "value");
       this.probabilities = distribution(levelType, probabilities);
       this.confidence = probability(confidence, "confidence");
-      this.nearestLevel = levels[(int) Math.floor(value + 0.5)];
+      this.nearestLevel = levels[(int) Math.round(value)];
       @Var E mostLikely = levels[0];
       for (E level : levels) {
         if (Objects.requireNonNull(this.probabilities.get(level))

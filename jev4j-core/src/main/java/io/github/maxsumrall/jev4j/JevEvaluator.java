@@ -42,7 +42,9 @@ import tools.jackson.databind.node.ObjectNode;
  * were avoided. Canceling a caller-created dependent stage does not cancel the original operation.
  * Waiting with {@code get(timeout, unit)}, interrupting a waiting thread, or using {@code
  * orTimeout} does not abort the request. The configured timeout is an HTTP request timeout, not an
- * end-to-end deadline covering preparation, decoding, or user continuations.
+ * end-to-end deadline covering preparation, decoding, or user continuations. In particular, on Java
+ * 17 it does not bound response-body reads after headers arrive; a stalled body can leave a
+ * synchronous call or asynchronous future pending.
  *
  * <p>Completion callbacks may run inline or on a completing thread. Use an explicit caller-owned
  * executor for expensive asynchronous continuations. The evaluator creates no additional executor
@@ -264,12 +266,15 @@ public final class JevEvaluator {
     } catch (RuntimeException failure) {
       return CompletableFuture.failedFuture(asyncFailure(failure));
     }
-    CompletableFuture<R> result = new CompletableFuture<>();
-    // Keep the original transport, even when an injected client returns an ordinary future.
-    result.whenComplete(
-        (value, failure) -> {
-          if (result.isCancelled()) transport.cancel(true);
-        });
+    CompletableFuture<R> result =
+        new CompletableFuture<>() {
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            // Abort before publishing cancellation, which can run blocking caller callbacks.
+            if (!isDone()) transport.cancel(true);
+            return super.cancel(mayInterruptIfRunning);
+          }
+        };
     transport.whenComplete(
         (response, failure) -> {
           if (result.isDone()) return;

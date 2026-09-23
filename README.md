@@ -494,20 +494,22 @@ uses `CancellationException`, not `IO` or `INTERRUPTED`. Synchronous methods sti
 `HttpClient.send` and preserve the thread's interrupt flag on interruption.
 
 Both `cancel(false)` and `cancel(true)` on the **original returned future** request
-`cancel(true)` on the underlying HTTP future. Cancellation is best effort: the request may already
-have been sent and the provider may continue work or charge for it. Calling an async method starts
-the request before returning its cancellation handle. Cancellation after completion cannot change
-the result; decoding already underway may finish and be discarded. Canceling a dependent stage,
-such as `asyncRouting`, does not cancel the original evaluation. Do not manually complete or
-obtrude evaluation futures.
+`cancel(true)` on the underlying HTTP future before running caller completion callbacks.
+Cancellation is best effort: the request may already have been sent and the provider may continue
+work or charge for it. Calling an async method starts the request before returning its cancellation
+handle. Cancellation after completion cannot change the result; decoding already underway may
+finish and be discarded. Canceling a dependent stage, such as `asyncRouting`, does not cancel the
+original evaluation. Do not manually complete or obtrude evaluation futures.
 
 The configured `.timeout(...)` remains the JDK **HTTP request timeout**, not a wall-clock deadline
-covering preparation, response decoding, and user callbacks. `get(timeout, unit)` and interruption
-of a thread waiting in `get()` only end that wait. `orTimeout` completes its future exceptionally
-but does not abort transport; once it has timed out, canceling that same future is too late. If you
-need a caller deadline, apply the timeout to a separate view (for example `operation.copy()`) and
-explicitly cancel the original operation when the view times out. There is no automatic retry,
-fallback, or splitting of a multi-question request.
+covering preparation, response decoding, and user callbacks. In particular, on Java 17 it does not
+bound response-body reads after headers arrive: a stalled body can leave a synchronous call or
+async future pending. `get(timeout, unit)` and interruption of a thread waiting in `get()` only end
+that wait. `orTimeout` completes its future exceptionally but does not abort transport; once it has
+timed out, canceling that same future is too late. If you need a caller deadline, apply the timeout
+to a separate view (for example `operation.copy()`) and explicitly cancel the original operation
+when the view times out. There is no automatic retry, fallback, or splitting of a multi-question
+request.
 
 Reuse the evaluator and its HTTP client. Async calls create no extra thread pool and never close
 a caller-supplied client or executor. Internal decoding and non-async continuations may run inline

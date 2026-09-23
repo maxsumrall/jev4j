@@ -127,6 +127,37 @@ final class AsyncEvaluationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void transportIsCancelledBeforeCallerCompletionCallbacks(boolean interrupt) throws Exception {
+    StubClient client = new StubClient();
+    CompletableFuture<Boolean> result = evaluator(client).testAsync(STATE, Q);
+    CountDownLatch callbackEntered = new CountDownLatch(1);
+    CountDownLatch releaseCallback = new CountDownLatch(1);
+    CompletableFuture<Boolean> dependent =
+        result.whenComplete(
+            (value, failure) -> {
+              callbackEntered.countDown();
+              await(releaseCallback);
+            });
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      CompletableFuture<Boolean> cancelled =
+          CompletableFuture.supplyAsync(() -> result.cancel(interrupt), executor);
+      assertTrue(callbackEntered.await(2, SECONDS));
+      assertTrue(result.isCancelled());
+      assertTrue(client.next.isCancelled(), "caller callbacks must not delay transport abort");
+      assertFalse(dependent.isDone(), "the caller callback is still blocked");
+      releaseCallback.countDown();
+      assertTrue(cancelled.get(2, SECONDS));
+      assertThrows(CancellationException.class, result::join);
+    } finally {
+      releaseCallback.countDown();
+      executor.shutdownNow();
+      assertTrue(executor.awaitTermination(2, SECONDS));
+    }
+  }
+
   @Test
   void validationThrowsBeforeDispatchAndStartupFailureReturnsAFailedFuture() {
     StubClient client = new StubClient();
