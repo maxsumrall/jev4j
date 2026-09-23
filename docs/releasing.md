@@ -1,88 +1,124 @@
 # Publishing to Maven Central
 
-The release workflow publishes `jev4j-parent`, `jev4j-core`, and
-`jev4j-spring-boot-starter` under `io.github.maxsumrall.jev4j`.
-It does not publish examples or consumer tests. Users need no custom repository
-entry after Central makes the release available.
-
-## One-time setup
-
-1. Sign in to [Central Publisher Portal](https://central.sonatype.com/).
-   Verify ownership of the `io.github.maxsumrall` namespace and generate a
-   [publishing token](https://central.sonatype.org/publish/generate-portal-token/).
-   Use the token's username and password, not your account password.
-2. The project uses the [MIT License](../LICENSE). The root POM declares matching
-   license metadata, and both library JARs include `META-INF/LICENSE`.
-   Preserve these notices when preparing a release.
-3. Create a passphrase-protected OpenPGP signing key. Publish its public key to a
-   [Central-supported keyserver](https://central.sonatype.org/publish/requirements/gpg/).
-   Back up the private key and revocation certificate outside GitHub.
-4. Create a GitHub environment named **maven-central**, restricted to the `main`
-   branch. Configure required reviewers and prevent self-review where supported.
-   Protect `main` with required CI checks and restrict creation/deletion of `v*`
-   tags with a repository ruleset. These are GitHub settings, not enforced by YAML.
-5. Add these **environment secrets**:
-
-   | Secret | Value |
-   | --- | --- |
-   | `CENTRAL_USERNAME` | Central token username |
-   | `CENTRAL_PASSWORD` | Central token password |
-   | `MAVEN_GPG_KEY` | ASCII-armored private signing key |
-   | `MAVEN_GPG_PASSPHRASE` | Signing key passphrase |
-   | `RELEASE_TAG_TOKEN` | Owner's repository-scoped token with Contents read/write for protected tag creation |
-
-The GPG plugin's Bouncy Castle signer reads the key from the environment. Do not
-commit keys, tokens, or Maven settings containing credentials. Signing and Central
-secrets are exposed only to the publishing step. The job's `GITHUB_TOKEN` has
-read-only permissions. Only the tag step receives `RELEASE_TAG_TOKEN`; it creates
-an annotated tag as `Max Sumrall <jmsumrall@gmail.com>`. Keep the administrator-only
-creation rule and the no-update/no-deletion rules. A rejected tag request stops
-the job before any Central upload; do not weaken protections to make it pass.
-Secret presence alone does not prove tagging authorization. The workflow uses no
-shared Maven cache.
-
-## Development and version policy
-
-Keep all six development POMs on `0.0.0-SNAPSHOT`, with SCM tags set to `HEAD`.
-Do not commit release-version changes or bump snapshots after a release.
-The standalone examples and consumer tests use the locally installed snapshot.
-README installation coordinates refer to a published version; update them after
-confirming a release is available, not as a prerequisite for publishing.
-
-New releases use **CalVer `YYYY.M.N`**, for example `2026.9.1`, then `2026.9.2`,
-then `2026.10.1`. Use the UTC release month and a positive sequence number within
-that month, without leading zeroes. Choose a number higher than previous reserved
-versions in that month; gaps are fine. The workflow validates the format but does
-not allocate numbers or enforce today's date. CalVer communicates release order,
-not API compatibility. Describe breaking changes in release notes; consumers
-should pin versions and review changes before upgrading.
+Use [release.yml](../.github/workflows/release.yml) to publish `jev4j-parent`, `jev4j-core`, and
+`jev4j-spring-boot-starter` under `io.github.maxsumrall.jev4j`. Examples and consumer tests stay out
+of the release. **Publication is irreversible.**
 
 ## Run a release
 
-1. Promote development changes to `main` using the checked fast-forward procedure
-   below. Wait for CI and OpenRouter to pass on its latest commit.
-2. Choose an unused CalVer version. Dispatch **Publish to Maven Central** from
-   `main`, with that version as its only input. Do not create the tag yourself.
-3. Review the version and full source SHA shown in the run name before approving
-   the `maven-central` deployment. GitHub pins `github.sha` at dispatch: new commits
-   pushed while approval is pending do not enter this release. If that SHA is not
-   the one you approved, cancel and start a new dispatch.
-4. After approval, CI substitutes versions in its checkout, checks the exact
-   source SHA's CI/OpenRouter runs, builds and tests, then reserves an annotated
-   `vVERSION` tag on that source SHA. Only after tag creation succeeds does CI sign
-   and deploy. No version-bump commit or push to `main` occurs.
+1. [Promote a checked commit](#promote-a-checked-commit) to `main`. Wait for its CI and OpenRouter
+   push runs to pass.
+2. Choose an unused CalVer version and dispatch **Publish to Maven Central** from `main`:
 
-Sonatype's [Central Publishing plugin](https://central.sonatype.org/publish/publish-portal-maven/)
-uses `autoPublish=true` and `waitUntil=published`: upload, validation, and
-irreversible publication are one operation. It does not use retired OSSRH
-endpoints. Running ordinary CI, pushing a tag, or building with `-Prelease` alone
-does not publish. The workflow does not create a GitHub Release or run paid
-provider tests itself.
+   ```shell
+   gh workflow run release.yml --repo maxsumrall/jev4j --ref main -f version=2026.9.1
+   ```
 
-The tag records the **source commit**, whose POMs still contain the snapshot.
-Published POMs and embedded JAR POMs contain the selected release version and
-`vVERSION` SCM tag. To reproduce unsigned packaging, use a disposable checkout of
-the source tag and run:
+3. Check the version and full source SHA in the run name before approving the `maven-central`
+   environment gate. Approval authorizes the tag and publication. GitHub pins the source SHA at
+   dispatch; later pushes do not enter that release. Cancel and start a new dispatch if it is wrong.
+4. After approval, the workflow substitutes POM versions in its checkout, verifies CI, builds and
+   tests, then reserves an annotated `vVERSION` source tag before signing and publishing.
+
+Do not create the tag yourself or dispatch a release as a setup test. The Central plugin uses
+`autoPublish=true` and `waitUntil=published`: upload, validation, and publication form one operation.
+Ordinary CI and tag pushes do not publish. The workflow creates no version-bump commit or GitHub Release.
+
+## Version policy
+
+Keep the six development POMs on `0.0.0-SNAPSHOT`, with SCM tags set to `HEAD`. Release tags point
+to those source commits; CI puts the release version and SCM tag into published POMs and JARs.
+Update README installation coordinates after confirming availability on Central.
+
+Use **CalVer `YYYY.M.N`**: UTC year, month, and a positive sequence number within that month,
+without leading zeroes. For example: `2026.9.1`, `2026.9.2`, `2026.10.1`. Choose a number higher
+than previous reservations that month; leave failed reservations in place. The workflow checks
+format, not today's date or the next available number. CalVer indicates release order, not API
+compatibility; document breaking changes.
+
+## Promote a checked commit
+
+`main` requires these GitHub Actions checks, pinned to app ID `15368`:
+
+- `build-java-17`
+- `test-java-compatibility (21)`
+- `test-java-compatibility (25)`
+
+The repository requires up-to-date checks and linear history, enforces rules for administrators,
+and blocks force pushes and branch deletion. It has no required PR gate.
+
+1. Fetch `origin/main` and base your changes on it. Use `Max Sumrall <jmsumrall@gmail.com>` as
+   author and committer, without tool attribution or thread trailers.
+2. Commit and push a preparation branch. Wait for all three checks to succeed on that exact SHA
+   from app `15368`; skipped and neutral results do not qualify.
+3. Fetch again. Confirm `origin/main` is an ancestor of the checked SHA and the new history has
+   no merge commits. If you must rebase, obtain fresh checks for the new SHA.
+4. Push the checked SHA to `refs/heads/main` without force. If GitHub rejects it, investigate
+   without weakening checks or using a bypass.
+5. Read back main's SHA and wait for its CI and live OpenRouter push runs to pass on that SHA.
+
+Amending, squashing, or rebasing changes the commit and invalidates its check evidence.
+Promotion does not authorize a release dispatch or tag creation.
+
+## Setup and credentials
+
+Recheck repository protections before releasing:
+
+- Two `refs/tags/v*` rulesets restrict creation to administrators and block updates/deletion
+  without bypass actors.
+- The `maven-central` environment permits branch `main`, requires review by `maxsumrall`, and
+  disables administrator bypass. The approved solo-maintainer setup permits self-review; it
+  provides manual approval, not two-person approval.
+
+These controls live in GitHub settings, not YAML. Obtain owner approval before changing them.
+Verify the gate and branch policy before adding secrets; do not use a release dispatch to test setup.
+
+Sign in to [Central](https://central.sonatype.com/) with the `maxsumrall` GitHub account. Confirm
+the `io.github.maxsumrall` namespace is **Verified**, then create a [publishing token](https://central.sonatype.com/usertoken).
+Save its generated username, password, and expiry in a password manager.
+
+Prepare a passphrase-protected OpenPGP signing key on your own machine, not in an orb. Use a key
+you control with a valid signing component. Publish the **public key** to a
+[Central-supported keyserver](https://central.sonatype.org/publish/requirements/gpg/) and verify
+retrieval against its full fingerprint. Back up the private key and revocation certificate outside
+the repository; keep the passphrase separate and track key/token expiry.
+
+Add five secrets to the protected `maven-central` environment:
+
+| Secret | Value |
+| --- | --- |
+| `CENTRAL_USERNAME` | Publishing token username, not your account login |
+| `CENTRAL_PASSWORD` | Publishing token password |
+| `MAVEN_GPG_KEY` | ASCII-armored private signing key |
+| `MAVEN_GPG_PASSPHRASE` | Signing key passphrase |
+| `RELEASE_TAG_TOKEN` | Owner's repository-scoped token with Contents read/write for protected tag creation |
+
+Use GitHub's environment settings or these commands in your own terminal. Keep secret values out
+of chat, command arguments, files in the repository, and logs:
+
+```shell
+gh secret set CENTRAL_USERNAME --repo maxsumrall/jev4j --env maven-central
+gh secret set CENTRAL_PASSWORD --repo maxsumrall/jev4j --env maven-central
+gh secret set MAVEN_GPG_PASSPHRASE --repo maxsumrall/jev4j --env maven-central
+gh secret set RELEASE_TAG_TOKEN --repo maxsumrall/jev4j --env maven-central
+```
+
+Export the selected publishing key through a local Bash pipeline, with tracing disabled:
+
+```bash
+set +x
+set -o pipefail
+gpg --armor --export-secret-keys YOUR_FULL_FINGERPRINT |
+  gh secret set MAVEN_GPG_KEY --repo maxsumrall/jev4j --env maven-central
+```
+
+Verify secret names and protection settings with `gh secret list` and GitHub's environment API.
+Stored names do not prove credential validity. The workflow gives `GITHUB_TOKEN` read access,
+exposes `RELEASE_TAG_TOKEN` to the tag step, and exposes signing/Central secrets to the publishing step.
+
+## Validate without publishing
+
+Use a disposable checkout of the source commit with JDK 17. Substitute the chosen version below:
 
 ```shell
 python3 .github/release-version.py 2026.9.1
@@ -93,193 +129,9 @@ python3 .github/release-version.py 2026.9.1
 ./mvnw --batch-mode --no-transfer-progress -f examples/spring-boot-triage/pom.xml verify
 ```
 
-Substitute the version being reproduced. Do not commit the modified POMs. These
-commands generate source/Javadoc JARs without signing or uploading. The release
-profile rejects snapshot versions/dependencies and missing license properties.
-
-## Publication guards
-
-The workflow accepts only `main` dispatches and rejects Actions reruns. It checks
-for an existing version tag and checks all three Central POM URLs, requiring 404
-responses. Network errors or unexpected HTTP statuses stop publication. A 404 is
-not proof that no upload is pending in Central; inspect Portal after an ambiguous
-run. Atomic tag creation reserves the version before any upload and rejects a
-competing release that reserved the same version after checkout.
-
-CI requires successful `push` runs on `main` of `ci.yml` and
-`openrouter-component.yml` for the pinned SHA. It checks the latest matching run's
-SHA, branch, event, status, and conclusion. Missing, pending, failed, cancelled,
-or malformed results and API errors stop publication. `GITHUB_TOKEN` has only
-`contents: read` and `actions: read`; tagging and Central use separate credentials.
-
-### Portal account and token
-
-Sign in at <https://central.sonatype.com> using the `maxsumrall` GitHub account.
-In Namespaces, confirm `io.github.maxsumrall` is **Verified**; it covers the
-`io.github.maxsumrall.jev4j` group. GitHub sign-up normally provisions the username
-namespace automatically. If it is missing, follow the Portal verification flow
-or contact Central support; do not assume ownership from the group ID alone.
-At <https://central.sonatype.com/usertoken>, generate a named publishing token
-with an expiration and save it in a password manager. Its generated **username**
-and **password** are `CENTRAL_USERNAME` and `CENTRAL_PASSWORD`. Neither value is
-your GitHub login, GitHub PAT, or Sonatype account password. Never put values in
-chat, shell command arguments, repository files, or logs.
-
-Before continuing, confirm privately that both token fields and the final expiration
-are saved in your password manager. Only report that they are saved; never send
-their values in chat. A visible active token does not prove its credentials have
-been backed up or tested.
-
-### Local signing key
-
-Use GnuPG on your own machine, never an orb or a remote development workspace.
-Install GnuPG if needed, then inspect existing keys locally:
-
-```shell
-gpg --list-secret-keys --keyid-format LONG --with-subkey-fingerprint
-```
-
-Reuse a key only if you control it, it has a usable signing component, is not
-expired or revoked, and is passphrase-protected. Otherwise run
-`gpg --full-generate-key` interactively. A dedicated RSA 4096 signing-capable key
-with a one-year expiration is a conservative choice. Enter your chosen public
-identity and a strong passphrase through the interactive prompts. Do not put the
-passphrase on a command line. Do not remove subkeys from an existing identity.
-
-Use the full fingerprint in place of `YOUR_FULL_FINGERPRINT` below. Keyservers
-publish the public key and its identity; confirm the name/email before sending.
-Never send the private key to a keyserver.
-
-```shell
-gpg --keyserver hkps://keyserver.ubuntu.com --send-keys YOUR_FULL_FINGERPRINT
-```
-
-Check retrieval from an independent temporary public keyring and compare the
-full fingerprint. Central must be able to retrieve the signing public key.
-Keep an encrypted private-key backup and the generated revocation certificate
-(`openpgp-revocs.d` under your GnuPG home) in offline storage or a suitable secret
-manager, outside the repository. Treat the revocation certificate as sensitive:
-it can invalidate the key. Test restoration privately. Keep the passphrase in a
-separate password-manager entry. Set a reminder before expiration, extend both
-primary/signing-key expiration as applicable, and republish the updated public
-key. If compromised, revoke and publish the revocation, rotate the GitHub key
-and passphrase secrets, and use a new key for future releases.
-
-### Environment protection and secrets
-
-Before changing shared settings, agree on the protection configuration with the
-repository owner. Proposed configuration: environment `maven-central`, selected
-**branch** `main` only (no tag deployment rule), required trusted reviewer, and
-administrator bypass disabled where available. The workflow is dispatched from
-`main` and checks out the pinned dispatch SHA. Prevent self-review only when another
-trusted reviewer is available; a solo maintainer cannot approve their own run
-with that option enabled. Main-branch and release-tag rules require separate
-approval and should prevent unreviewed workflow changes and tag movement.
-
-GitHub Free/Pro/Team required environment reviewers are available only for
-public repositories. Pro permits private environments/secrets/branch policies,
-but does not add required reviewers for private repositories. Private required
-reviewers need an eligible Enterprise setup. Do not make the repository public
-or buy/upgrade a plan without owner approval. A manual dispatch alone is not an
-equivalent enforced reviewer gate. If the plan cannot enforce the requested
-protection, stop and agree on the protection model before adding production keys.
-
-Available protection choices (none is selected automatically):
-
-| Choice | Protection actually provided |
-| --- | --- |
-| Public repository on a current GitHub plan | Environment required reviewers and branch restrictions; exposes repository contents/history publicly. Requires explicit visibility approval. |
-| Private repository in an eligible Enterprise setup | Private environment reviewer gate and branch restrictions; may require an organization/plan change. Requires explicit approval. |
-| Private repository with Pro/Team only | Environment secrets and branch restrictions, but no required-reviewer gate. Does not meet the requested approval protection by itself. |
-| Keep current setup and pause publication | No new access or spend; no production secrets added until a suitable gate is available. |
-
-A local, owner-operated release or an independently gated secret manager could
-be designed separately if requested; neither is silently substituted for the
-requested GitHub approval gate. Manual dispatch and passing CI are
-not human approval protection. Do not dispatch even as a setup test: GitHub can
-create a missing environment without any protection rules. Verify the configured
-reviewer gate, main-only branch policy, and bypass settings before adding secrets.
-
-### Approved repository protection and commit promotion
-
-The owner approved making this repository public. The applied protection is:
-
-- `main` requires `build-java-17`, `test-java-compatibility (21)`, and
-  `test-java-compatibility (25)`, each pinned to GitHub Actions app ID `15368`.
-  These names and app identity were verified from actual repository check runs.
-  Up-to-date checks, linear history, and administrator enforcement are enabled;
-  force pushes and branch deletion are disabled. There is no required PR gate.
-- Two active `refs/tags/v*` rulesets restrict creation to administrators and
-  prohibit updates/deletion without bypass actors.
-- `maven-central` permits only branch `main`, requires review by `maxsumrall`,
-  and disables administrator bypass. Self-review is allowed as approved for a
-  sole maintainer. This is a manual approval gate, not two-person approval.
-
-Recheck these settings before releasing. GitHub supports a direct push after
-[required status checks pass](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
-Preserve the checked commit and its identity using this procedure:
-
-1. Fetch current `origin/main`. Base preparation work on that history; never merge
-   an old-history branch. Set both author and committer to
-   `Max Sumrall <jmsumrall@gmail.com>`, with no tool attribution or thread trailers.
-2. Commit and push a preparation branch. Require all three exact checks above to
-   complete successfully from app `15368` on that full commit SHA. Do not accept
-   skipped or neutral results as release evidence.
-3. Fetch `origin/main` again and confirm it is an ancestor of the checked SHA and
-   that the new history contains no merge commits. If main advanced incompatibly,
-   replay only the preparation patch onto current main and obtain fresh checks.
-4. Push the checked SHA directly to `refs/heads/main` without force. This changes
-   the branch pointer without changing the commit SHA, author, or committer. If
-   rejected, stop and investigate; never weaken checks or use a bypass.
-5. Read back main's SHA and wait for its new CI and live OpenRouter push runs to
-   succeed on that exact SHA. OpenRouter runs on main, so it is a publication
-   prerequisite after promotion, not a required preparation-branch check.
-
-Do not amend, squash, or rebase a checked commit and reuse its previous checks.
-No preparation push authorizes creating a release tag or dispatching publication.
-
-### Enter environment secrets locally
-
-Once the protected environment exists, use repository Settings → Environments →
-`maven-central` → Environment secrets. Enter the five values directly there, or
-run the following in your own terminal (interactive input is hidden):
-
-```shell
-gh secret set CENTRAL_USERNAME --repo maxsumrall/jev4j --env maven-central
-gh secret set CENTRAL_PASSWORD --repo maxsumrall/jev4j --env maven-central
-gh secret set MAVEN_GPG_PASSPHRASE --repo maxsumrall/jev4j --env maven-central
-gh secret set RELEASE_TAG_TOKEN --repo maxsumrall/jev4j --env maven-central
-```
-
-For the key, use a local pipeline so the armored private key is not printed or
-written to a repository file. Run in Bash with tracing disabled. GnuPG may prompt
-locally for the passphrase. Export only the selected dedicated publishing key.
-
-```bash
-set +x
-set -o pipefail
-gpg --armor --export-secret-keys YOUR_FULL_FINGERPRINT |
-  gh secret set MAVEN_GPG_KEY --repo maxsumrall/jev4j --env maven-central
-```
-
-Verify names and policy without reading secret values:
-
-```shell
-gh secret list --repo maxsumrall/jev4j --env maven-central
-gh api repos/maxsumrall/jev4j/environments/maven-central
-gh api repos/maxsumrall/jev4j/environments/maven-central/deployment-branch-policies
-```
-
-Listing names proves storage/access to metadata, not token validity or successful
-signing. GitHub does not return stored secret values.
-
-### Non-publishing validation and approval record
-
-After preparing release POMs in a disposable checkout, run the unsigned release
-commands above. For a real local signing check, run the following in your own
-Bash terminal with the selected key and an interactive hidden passphrase prompt.
-The subshell removes the environment variables when it exits. Do not use Maven
-`-X`, shell tracing, or a captured terminal session with secrets loaded.
+Do not commit the modified POMs. These commands build unsigned artifacts without uploading.
+For a signing check, run this in your own Bash terminal after preparing those POMs. Avoid terminal
+recording, shell tracing, and Maven debug logging while secrets are loaded:
 
 ```bash
 (
@@ -293,58 +145,33 @@ The subshell removes the environment variables when it exits. Do not use Maven
 )
 ```
 
-Inspect both libraries' main/source/Javadoc JARs and the parent POM. Verify every
-`.asc` against its corresponding artifact/POM with `gpg --verify`. The parent
-uses POM packaging and does not need source/Javadoc JARs. The Central plugin
-creates bundle checksums at deployment; local `verify` does not exercise upload,
-server-side validation, credential validity, or publication. Do not run `deploy`
-as a dry run. Even manual-mode Central validation requires an upload and separate
-approval.
+Check the parent POM and both libraries' main/source/Javadoc JARs. Confirm release coordinates,
+SCM tags, and MIT license notices, including `META-INF/LICENSE`. Verify each `.asc` against its
+artifact with `gpg --verify`. Record the version, source SHA, signing fingerprint, and check results
+before approving publication.
 
-Before approval, record:
+Local verification does not test Central credentials or server-side validation. **Do not use
+`deploy` as a dry run.** Any upload needs separate approval.
 
-- Chosen license text and resolved POM license name/URL; inherited developer,
-  description, project URL, SCM connection and release tag in effective POMs.
-- Coordinated generated root/module-parent versions and standalone example/test
-  dependencies. No SNAPSHOT in published coordinates.
-- Exactly three coordinates: parent POM, core, optional-to-consumers starter.
-  Examples and consumer tests stay outside the reactor with deployment disabled.
-- Source/Javadoc content, signatures, public fingerprint retrieval, key/token
-  expiry, successful unsigned and signed checks, and secret names/protection.
-- Full source commit SHA, intended `vYYYY.M.N` SCM tag, successful CI
-  including Java 17/21/25 consumer checks and live component checks on that SHA.
-- Explicit owner approval of **version and commit** at the environment gate
-  before CI creates the annotated tag or publishes.
+## Failed or ambiguous releases
 
-For example, dispatch with:
+The workflow rejects reruns, existing version tags, and Central POM URLs that do not return 404.
+It also requires the latest `ci.yml` and `openrouter-component.yml` push runs on `main` to succeed
+for the pinned SHA. Network/API errors stop publication. Tag creation reserves the version before
+upload; a Central 404 alone cannot rule out a pending deployment.
 
-```shell
-gh workflow run release.yml --repo maxsumrall/jev4j --ref main \
-  -f version=2026.9.1
-```
+After a timeout or failure, inspect the run, reserved tag, and Central deployment before trying again:
 
-The environment approval releases the job. Its `./mvnw -Prelease deploy` invokes
-Central with `autoPublish=true` and `waitUntil=published`: upload, validation,
-and irreversible publication are one operation. Do not approve until version and SHA
-match the approval record.
+- **No tag or upload:** fix the failure and start a new dispatch.
+- **Tag exists:** leave it in place, even if signing or publication failed. Choose a new version.
+- **Upload status unclear:** retain the deployment ID and inspect Portal and all three coordinates.
+  Wait while the status is `PUBLISHING`; do not re-upload `PUBLISHED`. Inspect errors for `FAILED`.
+  A manual `VALIDATED` deployment needs publication approval. Contact Central support if no clear
+  deployment record exists.
 
-### Ambiguous timeout recovery
+Resolve an existing deployment before starting another release. Published versions are immutable;
+fix mistakes with a new version, not a moved tag or replacement upload.
 
-Do not rerun a timed-out publishing job. The workflow rejects reruns and reserved
-versions. If a run failed before reserving a tag or uploading, fix the problem and
-start a new dispatch. Once a tag exists, leave it in place even if signing or
-publication failed; choose a new version for a future release. Retain the deployment ID
-and inspect the Central Portal deployment and all three coordinates first. A
-`PUBLISHING` deployment needs time; `PUBLISHED` must never be uploaded again.
-A `VALIDATED` manual deployment may need explicit Portal publication approval;
-`FAILED` requires inspecting validation errors. For an unresolved upload with no
-clear deployment record, contact Central support before further publication.
-Resolve the existing deployment before starting another release. Central versions are
-immutable; published mistakes require a new version, never retagging/replacing.
-
-References: [Central namespace verification](https://central.sonatype.org/register/namespace/),
-[Portal tokens](https://central.sonatype.org/publish/generate-portal-token/),
-[Central requirements](https://central.sonatype.org/publish/requirements/),
-[public signing keys](https://central.sonatype.org/publish/requirements/gpg/),
-[Maven GPG signer](https://maven.apache.org/plugins/maven-gpg-plugin/sign-mojo.html),
-and [GitHub environment protection availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+References: [Central requirements](https://central.sonatype.org/publish/requirements/),
+[publishing plugin](https://central.sonatype.org/publish/publish-portal-maven/),
+[GPG signer](https://maven.apache.org/plugins/maven-gpg-plugin/sign-mojo.html).

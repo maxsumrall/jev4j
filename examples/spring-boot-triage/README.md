@@ -1,13 +1,9 @@
 # Spring Boot supermarket support triage
 
-A copyable Java 17 / Spring Boot 4 REST example using
-`io.github.maxsumrall.jev4j:jev4j-spring-boot-starter:0.0.0-SNAPSHOT`. It is a standalone Maven
-project: it has no repository parent and is not a root reactor module.
+Try `POST /triage` in a standalone Java 17 / Spring Boot 4 application. The response includes
+a queue recommendation, category probabilities, safety probability, and urgency score.
 
-The default `offline` profile makes no network calls and needs no API key. It returns clearly
-labeled, deterministic **synthetic fixtures** for the three exact messages below; any other message
-gets the synthetic low-confidence fixture and manual review. This is a runnable integration demo,
-not an NLP classifier and not real model output.
+The default `offline` profile uses **synthetic fixtures**, needs no key, and makes no network calls.
 
 From the repository root:
 
@@ -25,34 +21,38 @@ curl --fail-with-body -sS http://localhost:8080/triage \
   -d '{"message":"I was charged twice for my groceries."}'
 ```
 
-Other fixture messages are `My delivery is late and has not arrived.` and
-`How do I update my loyalty card name?`. The response identifies `answerSource`, reports the typed
-Choice probabilities and confidence, and includes Noul safety probability and Score urgency. The
-Choice is routed with an exhaustive enum `switch`. Low confidence produces the distinct
-`MANUAL_REVIEW_LOW_CONFIDENCE` decision and `MANUAL_REVIEW` queue even when the model category is
-`OTHER`. This demo only recommends a queue; it never refunds, updates an order, or performs another
-business action.
+The offline profile matches three exact messages:
 
-## Explicit live opt-in
+| Message | Queue |
+| --- | --- |
+| `I was charged twice for my groceries.` | `BILLING_SUPPORT` |
+| `My delivery is late and has not arrived.` | `DELIVERY_SUPPORT` |
+| `How do I update my loyalty card name?` | `GENERAL_SUPPORT` |
 
-The `live` profile enables the starter's OpenRouter evaluator and uses `jev-latest`. It can incur
-provider charges and evaluates three questions together in one provider request. The key and customer message are not
-logged by this application. Do not put the key in source or command arguments:
+Other messages use a low-confidence fixture: `MANUAL_REVIEW_LOW_CONFIDENCE` with queue
+`MANUAL_REVIEW`. Check `answerSource` to distinguish fixtures from model output.
+The demo recommends a queue; it does not perform business actions.
+
+## Call OpenRouter
+
+Set `OPENROUTER_API_KEY` in your environment, then enable the live profile:
 
 ```sh
-export OPENROUTER_API_KEY='...'
 ./mvnw -f examples/spring-boot-triage/pom.xml spring-boot:run \
   -Dspring-boot.run.profiles=live
 ```
 
-Provider failures return HTTP 503 with a sanitized error and no guessed classification. Input must
-be nonblank and at most 1000 characters; invalid input returns HTTP 400.
+Live mode evaluates three questions in one request to `jev-latest` per valid message.
+**Provider charges may apply.** The application does not log the key or customer message.
+Low-confidence choices go to manual review.
+
+Input must be nonblank and at most 1000 characters (HTTP 400 otherwise). Provider failures return
+HTTP 503 with a sanitized error and no classification.
 
 ## Copy elsewhere
 
-After installing the snapshot starter and core into the local Maven repository, copy this entire
-directory and run ordinary Maven. For a released artifact, replace the snapshot version in
-`pom.xml`.
+After installing the snapshots above, copy the whole directory, including `.mvn/jvm.config`,
+and run with Maven and JDK 17:
 
 ```sh
 cp -R examples/spring-boot-triage /tmp/jev4j-spring-boot-triage
@@ -61,5 +61,4 @@ mvn verify
 mvn spring-boot:run
 ```
 
-Run Maven with JDK 17. The copied `.mvn/jvm.config` supplies the JVM access required by Error Prone,
-so copy the whole directory, including hidden files.
+To use a published library, replace `0.0.0-SNAPSHOT` in `pom.xml` with the release version.
