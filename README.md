@@ -61,13 +61,14 @@ Each evaluation makes one provider request and may incur charges. Use
 
 ## Get started
 
-**Early development:** the API may change. Add the published `0.1.0` release from Maven Central:
+**Early development:** the API may change. Replace `YOUR_VERSION` with your chosen
+[Maven Central release](https://central.sonatype.com/artifact/io.github.maxsumrall.jev4j/jev4j-core):
 
 ```xml
 <dependency>
   <groupId>io.github.maxsumrall.jev4j</groupId>
   <artifactId>jev4j-core</artifactId>
-  <version>0.1.0</version>
+  <version>YOUR_VERSION</version>
 </dependency>
 ```
 

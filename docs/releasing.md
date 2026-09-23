@@ -8,10 +8,12 @@ of the release. **Publication is irreversible.**
 
 1. [Promote a checked commit](#promote-a-checked-commit) to `main`. Wait for its CI and OpenRouter
    push runs to pass.
-2. Choose an unused CalVer version and dispatch **Publish to Maven Central** from `main`:
+2. Set `RELEASE_VERSION` to an unused CalVer version, then dispatch **Publish to Maven Central**
+   from `main`:
 
    ```shell
-   gh workflow run release.yml --repo maxsumrall/jev4j --ref main -f version=2026.9.1
+   gh workflow run release.yml --repo maxsumrall/jev4j --ref main \
+     -f version="${RELEASE_VERSION:?Set RELEASE_VERSION to an unused CalVer version}"
    ```
 
 3. Check the version and full source SHA in the run name before approving the `maven-central`
@@ -28,13 +30,12 @@ Ordinary CI and tag pushes do not publish. The workflow creates no version-bump 
 
 Keep the six development POMs on `0.0.0-SNAPSHOT`, with SCM tags set to `HEAD`. Release tags point
 to those source commits; CI puts the release version and SCM tag into published POMs and JARs.
-Update README installation coordinates after confirming availability on Central.
+Keep installation examples version-neutral and link to Maven Central for available releases.
 
 Use **CalVer `YYYY.M.N`**: UTC year, month, and a positive sequence number within that month,
-without leading zeroes. For example: `2026.9.1`, `2026.9.2`, `2026.10.1`. Choose a number higher
-than previous reservations that month; leave failed reservations in place. The workflow checks
-format, not today's date or the next available number. CalVer indicates release order, not API
-compatibility; document breaking changes.
+without leading zeroes. Choose a number higher than previous reservations that month; leave failed
+reservations in place. The workflow checks format, not today's date or the next available number.
+CalVer indicates release order, not API compatibility; document breaking changes.
 
 ## Promote a checked commit
 
@@ -118,10 +119,11 @@ exposes `RELEASE_TAG_TOKEN` to the tag step, and exposes signing/Central secrets
 
 ## Validate without publishing
 
-Use a disposable checkout of the source commit with JDK 17. Substitute the chosen version below:
+Use a disposable checkout of the source commit with JDK 17. Set `RELEASE_VERSION` to the version
+you want to validate:
 
 ```shell
-python3 .github/release-version.py 2026.9.1
+python3 .github/release-version.py "${RELEASE_VERSION:?Set RELEASE_VERSION to the chosen CalVer version}"
 ./mvnw --batch-mode --no-transfer-progress -Prelease -Dgpg.skip=true clean install \
   -Dproject.build.outputTimestamp="$(git show -s --format=%ct HEAD)"
 ./mvnw --batch-mode --no-transfer-progress -f consumer-tests/pom.xml verify
