@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# JDK and Maven caches survive snapshots and pause/resume. Offline development
+# needs no authentication, backing services, or dependency installation on wake.

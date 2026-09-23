@@ -1,8 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! dpkg-query -W -f='${Status}' openjdk-17-jdk-headless 2>/dev/null | grep -q 'install ok installed'; then
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq openjdk-17-jdk-headless
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+SECONDS=0
+
+echo '==> Ensuring JDK 17 and Maven Wrapper prerequisites'
+missing=()
+for package in openjdk-17-jdk-headless ca-certificates curl unzip; do
+  if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  sudo apt-get update
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
 fi
+echo "==> Toolchain packages ready (${SECONDS}s elapsed)"
+
+# Debian's alternatives expose Java to subsequent login shells without a profile hook.
+export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
+export PATH="$JAVA_HOME/bin:$PATH"
 java -version
+
+# Exercise the real build so compiler processors and test/plugin dependencies are
+# cached too. Do not clean: stale snapshots can reuse incremental build outputs.
+# Never enable the paid openrouter-component or publishing release profiles here.
+echo '==> Building and installing libraries, including offline tests'
+time ./mvnw --batch-mode --no-transfer-progress install
+for project in consumer-tests examples/plain-java examples/spring-boot-triage; do
+  echo "==> Building $project (${SECONDS}s elapsed)"
+  time ./mvnw --batch-mode --no-transfer-progress -f "$project/pom.xml" verify
+done
+
+echo '==> Warming the plain Java runner with synthetic data'
+time ./mvnw --batch-mode --no-transfer-progress -f examples/plain-java/pom.xml exec:java
+echo "==> Orb setup complete (${SECONDS}s elapsed)"
