@@ -5,66 +5,53 @@
 
 **Use AI decisions in ordinary Java code.**
 
-Ask a question in plain English, then use the answer in an `if`, an enum `switch`, or your own
-record. With jev4j, you can route support requests, check intent, and rate content using
-[Jev](https://docs.typesafe.ai/introduction), TypeSafe's structured decision model.
-You define the possible answers and decide how much certainty you need before acting.
+Ask [Jev](https://docs.typesafe.ai/introduction), TypeSafe's structured decision model,
+a question in plain English. Use the answer in Java.
 
-<!-- java: members -->
+**A question in an `if`.**
+
+<!-- java: body -->
 ```java
-import io.github.maxsumrall.jev4j.Jev;
-import io.github.maxsumrall.jev4j.JevEvaluator;
-
-String supportQueue(JevEvaluator jev, String request) {
-  if (jev.test(request, Jev.noul("Does this customer need urgent help?").threshold(0.9))) {
-    return "priority-support";
-  }
-  return "normal-support";
+if (jev.test("I want my money back!", Jev.noul("Is this a refund request?"))) {
+  System.out.println("Start the refund workflow");
 }
 ```
 
-This makes one model request and takes the priority branch when Jev reports a yes probability
-of at least `0.9`. You choose the cutoff in code. Use `evaluate(...)` to keep the probability
-and reserve uncertain cases for review. [Create an evaluator below.](#get-started)
+**Your enum in a `switch`.**
 
-Choose the kind of decision your application needs:
-
-| You want to… | Use | Work with |
-| --- | --- | --- |
-| Check intent or gate an action | **Noul** | A yes/no probability and your boolean threshold |
-| Classify a message or choose a route | **Choice** | Your enum, with probabilities for each option |
-| Rate quality, severity, or sentiment | **Score** | A fractional score against your ordered levels |
-
-## Ask several questions in one request
-
-Combine up to eight questions about the same input and map their typed answers into your own
-record. Keep the probabilities alongside the decisions:
-
-<!-- java: members -->
+<!-- java: body -->
 ```java
-import io.github.maxsumrall.jev4j.Jev.NoulAnswer;
-import io.github.maxsumrall.jev4j.Jev.ChoiceAnswer;
+enum Team { BILLING, DELIVERY, SUPPORT }
 
-enum Topic { BILLING, DELIVERY, OTHER }
-
-record TicketAssessment(NoulAnswer refund, ChoiceAnswer<Topic> topic) {}
-
-TicketAssessment assess(JevEvaluator jev, String message) {
-  return jev.evaluate(
-      message,
-      Jev.noul("Is the customer asking for money back?").threshold(0.8),
-      Jev.choice(Topic.class, "Which team should handle this message?").minConfidence(0.85))
-      .map(TicketAssessment::new);
-}
+String inbox = switch (jev.evaluate(
+    "My parcel never arrived.", Jev.choice(Team.class, "Which team can help?")).value()) {
+  case BILLING -> "billing-support";
+  case DELIVERY -> "delivery-support";
+  case SUPPORT -> "general-support";
+};
 ```
 
-On the returned `TicketAssessment`, call `refund().isTrue()` for the refund decision and
-`topic().acceptedValue()` for an `Optional<Topic>` that is empty below your confidence threshold.
-You still have the original answers to inspect. The compiler checks the answer types through
-evaluation and record construction; you write no response-parsing code.
+**A score on your scale.**
+
+<!-- java: body -->
+```java
+enum Mood { CALM, FRUSTRATED, FURIOUS }
+
+double frustrationScore = jev.evaluate(
+    "This is the third failed delivery!",
+    Jev.score(Mood.class, "How frustrated is the customer?")).value();
+```
+
+Get a fractional score from `0` (CALM) to `2` (FURIOUS).
+
+These snippets use a configured evaluator named `jev`; [setup and imports are below](#get-started).
+Each evaluation makes one model request. Use the [acceptance helpers](#thresholds-are-application-policy)
+to check uncertainty before acting on a result.
 
 - **Keep decision policy in your application.** Apply thresholds without another model call.
   Inspect probabilities and send uncertain results for review; confidence is not a correctness guarantee.
+- **Ask several questions at once.** Combine up to eight questions in one request and
+  [map their typed answers into your own record](#multi-question-results).
 - **Use the data you have.** Pass text or take an immutable `Jev.State` snapshot of a Java record,
   map, list, or array.
 - **Fit your existing Java stack.** Use blocking calls or `CompletableFuture`s over the JDK HTTP
@@ -94,7 +81,7 @@ Add the core library to your application. No custom Maven repository is needed:
 
 Create an evaluator using your OpenRouter key from the environment:
 
-<!-- java: body -->
+<!-- java: members -->
 ```java
 import io.github.maxsumrall.jev4j.Jev;
 import io.github.maxsumrall.jev4j.Jev.NoulAnswer;
@@ -105,7 +92,12 @@ JevEvaluator jev = JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
     .openRouter()
     .model("jev-latest")
     .build();
+```
 
+Ask a question and keep its probability:
+
+<!-- java: body -->
+```java
 NoulQuestion refundRequested = Jev.noul("Is the customer asking for money back?")
     .describe(true, "Requests a refund or reversal of a charge")
     .describe(false, "Does not request money back")
