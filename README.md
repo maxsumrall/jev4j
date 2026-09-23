@@ -344,7 +344,7 @@ sensitive data. Request IDs stay in their accessor, outside error messages; trea
 data before logging. API keys must use bearer-token-safe characters and
 are neither trimmed nor included in validation errors or their cause chains.
 
-Evaluation is synchronous and accepts one question or two through eight typed questions with the
+Evaluation accepts one question or two through eight typed questions with the
 same String or `Jev.State` input. A multi-question evaluation uses one request and carries one set of metadata:
 
 <!-- java: members -->
@@ -412,6 +412,63 @@ Jackson types or mapper configuration. Your serializer's own exceptions remain y
 Existing String method signatures remain available. A bare null literal such as
 `test(null, question)` is now ambiguous between String and State overloads; a typed null still
 compiles and fails at runtime. Question instructions and descriptions remain strings.
+
+## Asynchronous evaluation
+
+Use `evaluateAsync`, `evaluateWithMetadataAsync`, or `testAsync` for native JDK HTTP async I/O.
+They accept either literal String text or an immutable `Jev.State`, preserve the same answer and
+metadata types, and return ordinary `CompletableFuture`s. Multi-question overloads support two
+through eight questions in one request, just like synchronous evaluation.
+
+Each call below is a separate potentially paid evaluation; choose the result shape you need.
+
+<!-- java: body -->
+```java
+import java.util.concurrent.CompletableFuture;
+
+CompletableFuture<NoulAnswer> asyncAnswer =
+    configured.evaluateAsync("Please refund this order.", refundRequested);
+CompletableFuture<JevEvaluator.Evaluation<NoulAnswer>> asyncMetadata =
+    configured.evaluateWithMetadataAsync(ticketState, refundRequested);
+CompletableFuture<Boolean> asyncDecision = configured.testAsync(ticketState, refundRequested);
+
+CompletableFuture<JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>>> asyncPair =
+    configured.evaluateAsync(ticketState, refundRequested, department);
+CompletableFuture<RoutingDecision> asyncRouting = asyncPair.thenApply(
+    (JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>> pairResult) ->
+        pairResult.map(RoutingDecision::new));
+
+// If this evaluation is no longer needed, cancel the original operation, not asyncRouting.
+asyncPair.cancel(true);
+```
+
+Argument validation and request serialization happen on the calling thread before dispatch;
+invalid arguments throw immediately. HTTP, I/O, timeout, and malformed-response failures complete
+the future exceptionally with the same sanitized `JevEvaluationException` categories and request
+IDs as synchronous calls. Unexpected async startup failures use `UNKNOWN`. `join()` wraps an
+evaluation failure in `CompletionException`; `get()` wraps it in `ExecutionException`. Cancellation
+uses `CancellationException`, not `IO` or `INTERRUPTED`. Synchronous methods still use blocking
+`HttpClient.send` and preserve the thread's interrupt flag on interruption.
+
+Both `cancel(false)` and `cancel(true)` on the **original returned future** request
+`cancel(true)` on the underlying HTTP future. Cancellation is best effort: the request may already
+have been sent and the provider may continue work or charge for it. Calling an async method starts
+the request before returning its cancellation handle. Cancellation after completion cannot change
+the result; decoding already underway may finish and be discarded. Canceling a dependent stage,
+such as `asyncRouting`, does not cancel the original evaluation. Do not manually complete or
+obtrude evaluation futures.
+
+The configured `.timeout(...)` remains the JDK **HTTP request timeout**, not a wall-clock deadline
+covering preparation, response decoding, and user callbacks. `get(timeout, unit)` and interruption
+of a thread waiting in `get()` only end that wait. `orTimeout` completes its future exceptionally
+but does not abort transport; once it has timed out, canceling that same future is too late. If you
+need a caller deadline, apply the timeout to a separate view (for example `operation.copy()`) and
+explicitly cancel the original operation when the view times out. There is no automatic retry,
+fallback, or splitting of a multi-question request.
+
+Reuse the evaluator and its HTTP client. Async calls create no extra thread pool and never close
+a caller-supplied client or executor. Internal decoding and non-async continuations may run inline
+or on a completion thread; use `thenApplyAsync(..., yourExecutor)` for expensive application work.
 
 ## Spring Boot
 

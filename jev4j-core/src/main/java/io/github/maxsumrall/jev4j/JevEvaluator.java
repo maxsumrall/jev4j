@@ -1,5 +1,6 @@
 package io.github.maxsumrall.jev4j;
 
+import com.google.errorprone.annotations.Var;
 import io.github.maxsumrall.jev4j.JevEvaluationException.FailureCategory;
 import java.io.IOException;
 import java.net.URI;
@@ -16,13 +17,37 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.function.Function;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-/** Immutable, thread-safe HTTP client for evaluating Jev questions. */
+/**
+ * Immutable, thread-safe HTTP client for evaluating Jev questions.
+ *
+ * <p>Async methods validate and serialize on the calling thread, then dispatch one request without
+ * waiting for its response. They reuse this evaluator's HTTP client and do not retry. Local
+ * validation failures throw immediately; transport and response failures complete the returned
+ * future exceptionally with sanitized {@link JevEvaluationException}s.
+ *
+ * <p>Cancel the original returned future to request best-effort transport cancellation. Both {@code
+ * cancel(false)} and {@code cancel(true)} request {@code cancel(true)} on the transport future;
+ * neither interrupts the caller or response decoder. Cancellation is distinct from an evaluation
+ * failure and does not guarantee that the request was not sent, provider work stopped, or charges
+ * were avoided. Canceling a caller-created dependent stage does not cancel the original operation.
+ * Waiting with {@code get(timeout, unit)}, interrupting a waiting thread, or using {@code
+ * orTimeout} does not abort the request. The configured timeout is an HTTP request timeout, not an
+ * end-to-end deadline covering preparation, decoding, or user continuations.
+ *
+ * <p>Completion callbacks may run inline or on a completing thread. Use an explicit caller-owned
+ * executor for expensive asynchronous continuations. The evaluator creates no additional executor
+ * and never closes a supplied client or its executor.
+ */
 public final class JevEvaluator {
   public static final URI TYPESAFE_BASE_URI = URI.create("https://api.typesafe.ai");
   public static final URI OPENROUTER_BASE_URI = URI.create("https://openrouter.ai/api");
@@ -118,7 +143,58 @@ public final class JevEvaluator {
         result.requestId());
   }
 
-  private Evaluation<List<Object>> exchange(
+  /** Evaluates literal text asynchronously, preserving the question's answer type. */
+  public <A> CompletableFuture<A> evaluateAsync(String state, Jev.Question<A> question) {
+    return evaluateAsync(Jev.State.from(state), question);
+  }
+
+  /** Evaluates a state snapshot asynchronously, preserving the question's answer type. */
+  public <A> CompletableFuture<A> evaluateAsync(Jev.State state, Jev.Question<A> question) {
+    Prepared<A> prepared = prepare(question);
+    return exchangeAsync(
+        List.of(prepared), state, QUESTION_KEY, result -> prepared.cast(result.answer().get(0)));
+  }
+
+  /** Evaluates literal text asynchronously with request-level metadata. */
+  public <A> CompletableFuture<Evaluation<A>> evaluateWithMetadataAsync(
+      String state, Jev.Question<A> question) {
+    return evaluateWithMetadataAsync(Jev.State.from(state), question);
+  }
+
+  /** Evaluates a state snapshot asynchronously with request-level metadata. */
+  public <A> CompletableFuture<Evaluation<A>> evaluateWithMetadataAsync(
+      Jev.State state, Jev.Question<A> question) {
+    Prepared<A> prepared = prepare(question);
+    return exchangeAsync(
+        List.of(prepared),
+        state,
+        QUESTION_KEY,
+        result ->
+            new Evaluation<>(
+                prepared.cast(result.answer().get(0)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
+  }
+
+  /** Evaluates literal text asynchronously and applies the question's inclusive threshold. */
+  public CompletableFuture<Boolean> testAsync(String state, Jev.NoulQuestion question) {
+    return testAsync(Jev.State.from(state), question);
+  }
+
+  /** Evaluates a state snapshot asynchronously and applies the question's inclusive threshold. */
+  public CompletableFuture<Boolean> testAsync(Jev.State state, Jev.NoulQuestion question) {
+    Prepared<Jev.NoulAnswer> prepared = prepare(question);
+    return exchangeAsync(
+        List.of(prepared),
+        state,
+        QUESTION_KEY,
+        result -> prepared.cast(result.answer().get(0)).isTrue());
+  }
+
+  private HttpRequest request(
       List<Prepared<?>> preparedQuestions, Jev.State state, String firstKey) {
     Objects.requireNonNull(state, "state");
     ObjectNode root = JSON.createObjectNode();
@@ -129,13 +205,17 @@ public final class JevEvaluator {
       String key = preparedQuestions.size() == 1 ? firstKey : "question" + (i + 1);
       questions.set(key, preparedQuestions.get(i).node());
     }
-    HttpRequest request =
-        HttpRequest.newBuilder(endpoint)
-            .timeout(timeout)
-            .header("Authorization", "Bearer " + apiKey)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(root)))
-            .build();
+    return HttpRequest.newBuilder(endpoint)
+        .timeout(timeout)
+        .header("Authorization", "Bearer " + apiKey)
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(root)))
+        .build();
+  }
+
+  private Evaluation<List<Object>> exchange(
+      List<Prepared<?>> preparedQuestions, Jev.State state, String firstKey) {
+    HttpRequest request = request(preparedQuestions, state, firstKey);
     HttpResponse<String> response;
     try {
       response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -156,6 +236,73 @@ public final class JevEvaluator {
       throw new JevEvaluationException(
           "evaluation request failed", FailureCategory.IO, OptionalInt.empty(), Optional.empty());
     }
+    return decode(preparedQuestions, firstKey, response);
+  }
+
+  // These callbacks complete the public result themselves; their dependent stages are not results.
+  @SuppressWarnings("FutureReturnValueIgnored")
+  private <R> CompletableFuture<R> exchangeAsync(
+      List<Prepared<?>> preparedQuestions,
+      Jev.State state,
+      String firstKey,
+      Function<Evaluation<List<Object>>, R> projection) {
+    // Preparation is deliberately outside the asynchronous failure boundary.
+    HttpRequest request = request(preparedQuestions, state, firstKey);
+    CompletableFuture<HttpResponse<String>> transport;
+    try {
+      transport = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+    } catch (RuntimeException failure) {
+      return CompletableFuture.failedFuture(asyncFailure(failure));
+    }
+    CompletableFuture<R> result = new CompletableFuture<>();
+    // Keep the original transport, even when an injected client returns an ordinary future.
+    result.whenComplete(
+        (value, failure) -> {
+          if (result.isCancelled()) transport.cancel(true);
+        });
+    transport.whenComplete(
+        (response, failure) -> {
+          if (result.isDone()) return;
+          if (failure != null) {
+            result.completeExceptionally(asyncFailure(failure));
+            return;
+          }
+          try {
+            result.complete(
+                projection.apply(
+                    decode(preparedQuestions, firstKey, Objects.requireNonNull(response))));
+          } catch (JevEvaluationException invalidResponse) {
+            result.completeExceptionally(invalidResponse);
+          } catch (Throwable unexpected) {
+            // Do not strand the public future when decoding/projection fails in a callback.
+            result.completeExceptionally(asyncFailure(unexpected));
+          }
+        });
+    // Returning a dependent stage here would disconnect cancellation from the transport.
+    return result;
+  }
+
+  private static RuntimeException asyncFailure(Throwable failure) {
+    @Var Throwable cause = failure;
+    while (cause instanceof CompletionException && cause.getCause() != null)
+      cause = cause.getCause();
+    if (cause instanceof CancellationException)
+      return new CancellationException("evaluation cancelled");
+    if (cause instanceof HttpTimeoutException)
+      return new JevEvaluationException(
+          "evaluation request timed out",
+          FailureCategory.TIMEOUT,
+          OptionalInt.empty(),
+          Optional.empty());
+    return new JevEvaluationException(
+        "evaluation request failed",
+        cause instanceof IOException ? FailureCategory.IO : FailureCategory.UNKNOWN,
+        OptionalInt.empty(),
+        Optional.empty());
+  }
+
+  private Evaluation<List<Object>> decode(
+      List<Prepared<?>> preparedQuestions, String firstKey, HttpResponse<String> response) {
     Optional<String> requestId =
         response.headers().firstValue("x-typesafe-request-id").filter(value -> !value.isBlank());
     if (response.statusCode() < 200 || response.statusCode() >= 300)
@@ -418,6 +565,32 @@ public final class JevEvaluator {
         result.requestId());
   }
 
+  /** Evaluates 2 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2> CompletableFuture<Evaluation2<A1, A2>> evaluateAsync(
+      String state, Jev.Question<A1> question1, Jev.Question<A2> question2) {
+    return evaluateAsync(Jev.State.from(state), question1, question2);
+  }
+
+  /** Evaluates 2 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2> CompletableFuture<Evaluation2<A1, A2>> evaluateAsync(
+      Jev.State state, Jev.Question<A1> question1, Jev.Question<A2> question2) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    return exchangeAsync(
+        List.of(prepared1, prepared2),
+        state,
+        "question1",
+        result ->
+            new Evaluation2<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
+  }
+
   @FunctionalInterface
   public interface Function2<A1, A2, R> {
     R apply(A1 answer1, A2 answer2);
@@ -483,6 +656,40 @@ public final class JevEvaluator {
         result.id(),
         result.provider(),
         result.requestId());
+  }
+
+  /** Evaluates 3 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3> CompletableFuture<Evaluation3<A1, A2, A3>> evaluateAsync(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3) {
+    return evaluateAsync(Jev.State.from(state), question1, question2, question3);
+  }
+
+  /** Evaluates 3 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3> CompletableFuture<Evaluation3<A1, A2, A3>> evaluateAsync(
+      Jev.State state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    return exchangeAsync(
+        List.of(prepared1, prepared2, prepared3),
+        state,
+        "question1",
+        result ->
+            new Evaluation3<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                prepared3.cast(result.answer().get(2)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
   }
 
   @FunctionalInterface
@@ -557,6 +764,44 @@ public final class JevEvaluator {
         result.id(),
         result.provider(),
         result.requestId());
+  }
+
+  /** Evaluates 4 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4> CompletableFuture<Evaluation4<A1, A2, A3, A4>> evaluateAsync(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4) {
+    return evaluateAsync(Jev.State.from(state), question1, question2, question3, question4);
+  }
+
+  /** Evaluates 4 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4> CompletableFuture<Evaluation4<A1, A2, A3, A4>> evaluateAsync(
+      Jev.State state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    return exchangeAsync(
+        List.of(prepared1, prepared2, prepared3, prepared4),
+        state,
+        "question1",
+        result ->
+            new Evaluation4<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                prepared3.cast(result.answer().get(2)),
+                prepared4.cast(result.answer().get(3)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
   }
 
   @FunctionalInterface
@@ -640,6 +885,49 @@ public final class JevEvaluator {
         result.id(),
         result.provider(),
         result.requestId());
+  }
+
+  /** Evaluates 5 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5> CompletableFuture<Evaluation5<A1, A2, A3, A4, A5>> evaluateAsync(
+      String state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5) {
+    return evaluateAsync(
+        Jev.State.from(state), question1, question2, question3, question4, question5);
+  }
+
+  /** Evaluates 5 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5> CompletableFuture<Evaluation5<A1, A2, A3, A4, A5>> evaluateAsync(
+      Jev.State state,
+      Jev.Question<A1> question1,
+      Jev.Question<A2> question2,
+      Jev.Question<A3> question3,
+      Jev.Question<A4> question4,
+      Jev.Question<A5> question5) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    return exchangeAsync(
+        List.of(prepared1, prepared2, prepared3, prepared4, prepared5),
+        state,
+        "question1",
+        result ->
+            new Evaluation5<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                prepared3.cast(result.answer().get(2)),
+                prepared4.cast(result.answer().get(3)),
+                prepared5.cast(result.answer().get(4)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
   }
 
   @FunctionalInterface
@@ -744,6 +1032,55 @@ public final class JevEvaluator {
         result.id(),
         result.provider(),
         result.requestId());
+  }
+
+  /** Evaluates 6 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5, A6>
+      CompletableFuture<Evaluation6<A1, A2, A3, A4, A5, A6>> evaluateAsync(
+          String state,
+          Jev.Question<A1> question1,
+          Jev.Question<A2> question2,
+          Jev.Question<A3> question3,
+          Jev.Question<A4> question4,
+          Jev.Question<A5> question5,
+          Jev.Question<A6> question6) {
+    return evaluateAsync(
+        Jev.State.from(state), question1, question2, question3, question4, question5, question6);
+  }
+
+  /** Evaluates 6 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5, A6>
+      CompletableFuture<Evaluation6<A1, A2, A3, A4, A5, A6>> evaluateAsync(
+          Jev.State state,
+          Jev.Question<A1> question1,
+          Jev.Question<A2> question2,
+          Jev.Question<A3> question3,
+          Jev.Question<A4> question4,
+          Jev.Question<A5> question5,
+          Jev.Question<A6> question6) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Prepared<A6> prepared6 = prepare(question6);
+    return exchangeAsync(
+        List.of(prepared1, prepared2, prepared3, prepared4, prepared5, prepared6),
+        state,
+        "question1",
+        result ->
+            new Evaluation6<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                prepared3.cast(result.answer().get(2)),
+                prepared4.cast(result.answer().get(3)),
+                prepared5.cast(result.answer().get(4)),
+                prepared6.cast(result.answer().get(5)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
   }
 
   @FunctionalInterface
@@ -865,6 +1202,66 @@ public final class JevEvaluator {
         result.id(),
         result.provider(),
         result.requestId());
+  }
+
+  /** Evaluates 7 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5, A6, A7>
+      CompletableFuture<Evaluation7<A1, A2, A3, A4, A5, A6, A7>> evaluateAsync(
+          String state,
+          Jev.Question<A1> question1,
+          Jev.Question<A2> question2,
+          Jev.Question<A3> question3,
+          Jev.Question<A4> question4,
+          Jev.Question<A5> question5,
+          Jev.Question<A6> question6,
+          Jev.Question<A7> question7) {
+    return evaluateAsync(
+        Jev.State.from(state),
+        question1,
+        question2,
+        question3,
+        question4,
+        question5,
+        question6,
+        question7);
+  }
+
+  /** Evaluates 7 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5, A6, A7>
+      CompletableFuture<Evaluation7<A1, A2, A3, A4, A5, A6, A7>> evaluateAsync(
+          Jev.State state,
+          Jev.Question<A1> question1,
+          Jev.Question<A2> question2,
+          Jev.Question<A3> question3,
+          Jev.Question<A4> question4,
+          Jev.Question<A5> question5,
+          Jev.Question<A6> question6,
+          Jev.Question<A7> question7) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Prepared<A6> prepared6 = prepare(question6);
+    Prepared<A7> prepared7 = prepare(question7);
+    return exchangeAsync(
+        List.of(prepared1, prepared2, prepared3, prepared4, prepared5, prepared6, prepared7),
+        state,
+        "question1",
+        result ->
+            new Evaluation7<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                prepared3.cast(result.answer().get(2)),
+                prepared4.cast(result.answer().get(3)),
+                prepared5.cast(result.answer().get(4)),
+                prepared6.cast(result.answer().get(5)),
+                prepared7.cast(result.answer().get(6)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
   }
 
   @FunctionalInterface
@@ -1004,6 +1401,72 @@ public final class JevEvaluator {
         result.id(),
         result.provider(),
         result.requestId());
+  }
+
+  /** Evaluates 8 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5, A6, A7, A8>
+      CompletableFuture<Evaluation8<A1, A2, A3, A4, A5, A6, A7, A8>> evaluateAsync(
+          String state,
+          Jev.Question<A1> question1,
+          Jev.Question<A2> question2,
+          Jev.Question<A3> question3,
+          Jev.Question<A4> question4,
+          Jev.Question<A5> question5,
+          Jev.Question<A6> question6,
+          Jev.Question<A7> question7,
+          Jev.Question<A8> question8) {
+    return evaluateAsync(
+        Jev.State.from(state),
+        question1,
+        question2,
+        question3,
+        question4,
+        question5,
+        question6,
+        question7,
+        question8);
+  }
+
+  /** Evaluates 8 questions in one asynchronous request; cancel the original returned future. */
+  public <A1, A2, A3, A4, A5, A6, A7, A8>
+      CompletableFuture<Evaluation8<A1, A2, A3, A4, A5, A6, A7, A8>> evaluateAsync(
+          Jev.State state,
+          Jev.Question<A1> question1,
+          Jev.Question<A2> question2,
+          Jev.Question<A3> question3,
+          Jev.Question<A4> question4,
+          Jev.Question<A5> question5,
+          Jev.Question<A6> question6,
+          Jev.Question<A7> question7,
+          Jev.Question<A8> question8) {
+    Prepared<A1> prepared1 = prepare(question1);
+    Prepared<A2> prepared2 = prepare(question2);
+    Prepared<A3> prepared3 = prepare(question3);
+    Prepared<A4> prepared4 = prepare(question4);
+    Prepared<A5> prepared5 = prepare(question5);
+    Prepared<A6> prepared6 = prepare(question6);
+    Prepared<A7> prepared7 = prepare(question7);
+    Prepared<A8> prepared8 = prepare(question8);
+    return exchangeAsync(
+        List.of(
+            prepared1, prepared2, prepared3, prepared4, prepared5, prepared6, prepared7, prepared8),
+        state,
+        "question1",
+        result ->
+            new Evaluation8<>(
+                prepared1.cast(result.answer().get(0)),
+                prepared2.cast(result.answer().get(1)),
+                prepared3.cast(result.answer().get(2)),
+                prepared4.cast(result.answer().get(3)),
+                prepared5.cast(result.answer().get(4)),
+                prepared6.cast(result.answer().get(5)),
+                prepared7.cast(result.answer().get(6)),
+                prepared8.cast(result.answer().get(7)),
+                result.model(),
+                result.usage(),
+                result.id(),
+                result.provider(),
+                result.requestId()));
   }
 
   @FunctionalInterface

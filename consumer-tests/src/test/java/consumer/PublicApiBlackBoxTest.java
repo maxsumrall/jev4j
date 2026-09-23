@@ -2,6 +2,7 @@ package consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,12 +25,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -97,6 +102,137 @@ final class PublicApiBlackBoxTest {
   }
 
   public record Ticket(String message, List<Integer> attempts) {}
+
+  @Test
+  void asyncHttpPreservesSnapshotSingleTypesThresholdAndLiteralText() throws Exception {
+    JevEvaluator client = evaluator();
+    List<Integer> attempts = new ArrayList<>(List.of(2, 5));
+    Jev.State state = Jev.State.from(new Ticket("refund", attempts));
+    attempts.clear();
+    response.set(fixture("noul-response.json"));
+    requestId.set("async-header");
+    JevEvaluator.Evaluation<Jev.NoulAnswer> metadata =
+        client
+            .evaluateWithMetadataAsync(state, Jev.noul("refund?").threshold(.73))
+            .get(3, TimeUnit.SECONDS);
+    assertEquals(.73, metadata.answer().probabilityTrue());
+    assertTrue(metadata.answer().isTrue());
+    assertEquals("async-header", metadata.requestId().orElseThrow());
+    assertEquals("fixture-1", metadata.id().orElseThrow());
+    assertEquals(11, metadata.usage().inputTokens());
+    assertEquals(
+        JSON.readTree("{\"message\":\"refund\",\"attempts\":[2,5]}"),
+        JSON.readTree(request.get()).path("state"));
+    assertFalse(
+        client
+            .testAsync("{\"literal\":true}", Jev.noul("x").threshold(.74))
+            .get(3, TimeUnit.SECONDS));
+    assertEquals("{\"literal\":true}", JSON.readTree(request.get()).path("state").stringValue());
+    response.set(fixture("choice-response.json"));
+    Jev.ChoiceAnswer<Route> choice =
+        client.evaluateAsync("s", Jev.choice(Route.class, "route")).get(3, TimeUnit.SECONDS);
+    assertEquals(Route.DELIVERY, choice.value());
+    assertEquals(.78, choice.probabilities().get(Route.DELIVERY));
+    response.set(fixture("score-response.json"));
+    Jev.EnumScoreAnswer<Quality> typed =
+        client.evaluateAsync(state, Jev.score(Quality.class, "quality")).get(3, TimeUnit.SECONDS);
+    assertEquals(1.4, typed.value());
+    assertEquals(.5, typed.probabilities().get(Quality.EXCELLENT));
+    Jev.ScoreAnswer score =
+        client
+            .evaluateAsync(
+                "s", Jev.score("quality").level("poor").level("ok").level("good").build())
+            .get(3, TimeUnit.SECONDS);
+    assertEquals(1.4, score.value());
+    assertEquals(List.of(.1, .4, .5), score.probabilities());
+    assertEquals(5, requestCount.get());
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {2, 3, 4, 5, 6, 7, 8})
+  void asyncHttpMultiKeepsEachSlotAndSharedMetadata(int arity) throws Exception {
+    StringBuilder answers = new StringBuilder();
+    // Reverse JSON field order and use distinct probabilities to detect slot/index mistakes.
+    for (int i = arity; i >= 1; i--) {
+      if (i < arity) answers.append(',');
+      answers
+          .append("\"question")
+          .append(i)
+          .append("\":{\"type\":\"noul\",\"noul\":0.")
+          .append(i)
+          .append('}');
+    }
+    response.set(
+        "{\"model\":\"m\",\"answers\":{"
+            + answers
+            + "},\"usage\":{\"input_tokens\":7,\"output_tokens\":2},\"id\":\"body-multi\",\"provider\":\"p\"}");
+    requestId.set("header-multi");
+    JevEvaluator client = evaluator();
+    Jev.State state = Jev.State.from(Map.of("message", "help"));
+    Jev.NoulQuestion q = Jev.noul("urgent?");
+    CompletableFuture<?> pending =
+        switch (arity) {
+          case 2 -> client.evaluateAsync(state, q, q);
+          case 3 -> client.evaluateAsync(state, q, q, q);
+          case 4 -> client.evaluateAsync(state, q, q, q, q);
+          case 5 -> client.evaluateAsync(state, q, q, q, q, q);
+          case 6 -> client.evaluateAsync(state, q, q, q, q, q, q);
+          case 7 -> client.evaluateAsync(state, q, q, q, q, q, q, q);
+          case 8 -> client.evaluateAsync(state, q, q, q, q, q, q, q, q);
+          default -> throw new AssertionError(arity);
+        };
+    Object result = pending.get(3, TimeUnit.SECONDS);
+    for (int i = 1; i <= arity; i++) {
+      Jev.NoulAnswer answer =
+          (Jev.NoulAnswer) result.getClass().getMethod("answer" + i).invoke(result);
+      assertEquals(i / 10.0, answer.probabilityTrue());
+    }
+    assertEquals(
+        java.util.Optional.of("header-multi"),
+        result.getClass().getMethod("requestId").invoke(result));
+    assertEquals(
+        java.util.Optional.of("body-multi"), result.getClass().getMethod("id").invoke(result));
+    assertEquals(
+        java.util.Optional.of("p"), result.getClass().getMethod("provider").invoke(result));
+    assertEquals("m", result.getClass().getMethod("model").invoke(result));
+    JevEvaluator.Usage usage =
+        (JevEvaluator.Usage) result.getClass().getMethod("usage").invoke(result);
+    assertEquals(7, usage.inputTokens());
+    assertEquals(2, usage.outputTokens());
+    assertEquals(1, requestCount.get());
+    assertEquals(arity, JSON.readTree(request.get()).path("questions").size());
+    assertEquals(
+        JSON.readTree("{\"message\":\"help\"}"), JSON.readTree(request.get()).path("state"));
+  }
+
+  @Test
+  void asyncHttpAndMalformedFailuresKeepHeaderButOmitPrivateContent() {
+    JevEvaluator client = evaluator();
+    requestId.set("failure-header");
+    response.set("PRIVATE_RESPONSE safe-dummy-key");
+    for (int code : List.of(503, 200)) {
+      status = code;
+      CompletableFuture<?> result = client.evaluateAsync("PRIVATE_STATE", Jev.noul("x"));
+      JevEvaluationException failure =
+          assertInstanceOf(
+              JevEvaluationException.class,
+              assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS))
+                  .getCause());
+      assertEquals(
+          code == 503
+              ? JevEvaluationException.FailureCategory.HTTP
+              : JevEvaluationException.FailureCategory.MALFORMED_RESPONSE,
+          failure.category());
+      assertEquals(
+          code == 503 ? java.util.OptionalInt.of(503) : java.util.OptionalInt.empty(),
+          failure.httpStatusCode());
+      assertEquals("failure-header", failure.requestId().orElseThrow());
+      assertFalse(failure.getMessage().contains("PRIVATE"));
+      assertFalse(failure.getMessage().contains("safe-dummy-key"));
+      assertNull(failure.getCause());
+    }
+    assertEquals(2, requestCount.get());
+  }
 
   @Test
   void structuredStateIsAnEagerReusableSnapshotWithUnchangedDiagnostics() throws Exception {
@@ -189,8 +325,9 @@ final class PublicApiBlackBoxTest {
   }
 
   @ParameterizedTest
-  @ValueSource(ints = {2, 8})
-  void structuredMultiPreservesMixedTypesOrderAndOneRequest(int arity) {
+  @CsvSource({"2,false", "8,false", "2,true", "8,true"})
+  void structuredMultiPreservesMixedTypesOrderAndOneRequest(int arity, boolean async)
+      throws Exception {
     StringBuilder answers =
         new StringBuilder(
             "\"question2\":{\"type\":\"score\",\"score\":0.8,\"probabilities\":{\"0\":0.2,\"1\":0.8},\"confidence\":0.7},"
@@ -216,7 +353,9 @@ final class PublicApiBlackBoxTest {
     Decision decision;
     if (arity == 2) {
       JevEvaluator.Evaluation2<Jev.NoulAnswer, Jev.ScoreAnswer> result =
-          client.evaluate(state, q, score);
+          async
+              ? client.evaluateAsync(state, q, score).get(3, TimeUnit.SECONDS)
+              : client.evaluate(state, q, score);
       decision =
           result.map((Jev.NoulAnswer a, Jev.ScoreAnswer b) -> new Decision(a.isTrue(), b.value()));
       assertEquals("structured-multi-id", result.requestId().orElseThrow());
@@ -231,7 +370,10 @@ final class PublicApiBlackBoxTest {
               Jev.NoulAnswer,
               Jev.NoulAnswer,
               Jev.NoulAnswer>
-          result = client.evaluate(state, q, score, q, q, q, q, q, q);
+          result =
+              async
+                  ? client.evaluateAsync(state, q, score, q, q, q, q, q, q).get(3, TimeUnit.SECONDS)
+                  : client.evaluate(state, q, score, q, q, q, q, q, q);
       decision = new Decision(result.answer1().isTrue(), result.answer2().value());
       assertEquals(
           List.of(.3, .4, .5, .6, .7, .8),

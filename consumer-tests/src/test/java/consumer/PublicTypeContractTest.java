@@ -67,6 +67,17 @@ final class PublicTypeContractTest {
           JevEvaluator.Evaluation<Jev.ChoiceAnswer<Route>> cm = e.evaluateWithMetadata(input, c);
           JevEvaluator.Evaluation<Jev.EnumScoreAnswer<Route>> em = e.evaluateWithMetadata(input, es);
           JevEvaluator.Evaluation<Jev.ScoreAnswer> sm = e.evaluateWithMetadata(input, s);
+          CompletableFuture<Boolean> ab = e.testAsync(input, n);
+          CompletableFuture<Jev.NoulAnswer> an = e.evaluateAsync(input, n);
+          CompletableFuture<Jev.ChoiceAnswer<Route>> ac = e.evaluateAsync(input, c);
+          CompletableFuture<Jev.EnumScoreAnswer<Route>> ae = e.evaluateAsync(input, es);
+          CompletableFuture<Jev.ScoreAnswer> as = e.evaluateAsync(input, s);
+          CompletableFuture<JevEvaluator.Evaluation<Jev.NoulAnswer>> amn = e.evaluateWithMetadataAsync(input, n);
+          CompletableFuture<JevEvaluator.Evaluation<Jev.ChoiceAnswer<Route>>> amc = e.evaluateWithMetadataAsync(input, c);
+          CompletableFuture<JevEvaluator.Evaluation<Jev.EnumScoreAnswer<Route>>> ame = e.evaluateWithMetadataAsync(input, es);
+          CompletableFuture<JevEvaluator.Evaluation<Jev.ScoreAnswer>> ams = e.evaluateWithMetadataAsync(input, s);
+          Jev.Question<Jev.NoulAnswer> generic = n;
+          CompletableFuture<Jev.NoulAnswer> ag = e.evaluateAsync(input, generic);
           """);
       for (int arity = 2; arity <= 8; arity++) {
         List<String> types = new ArrayList<>();
@@ -94,10 +105,26 @@ final class PublicTypeContractTest {
             .append(".map((")
             .append(String.join(",", parameters))
             .append(") -> a1.isTrue());");
+        body.append("CompletableFuture<JevEvaluator.Evaluation")
+            .append(arity)
+            .append('<')
+            .append(String.join(",", types))
+            .append(">> ar")
+            .append(arity)
+            .append(" = e.evaluateAsync(input,")
+            .append(String.join(",", questions))
+            .append(");")
+            .append("CompletableFuture<Boolean> mappedAsync")
+            .append(arity)
+            .append(" = ar")
+            .append(arity)
+            .append(".thenApply(r -> r.map((")
+            .append(String.join(",", parameters))
+            .append(") -> a1.isTrue()));");
       }
       assertTrue(
           compiles(
-              "import io.github.maxsumrall.jev4j.*; class T { enum Route { A, B } void f(JevEvaluator e, "
+              "import io.github.maxsumrall.jev4j.*; import java.util.concurrent.CompletableFuture; class T { enum Route { A, B } void f(JevEvaluator e, "
                   + inputType
                   + " input) {"
                   + body
@@ -126,6 +153,32 @@ final class PublicTypeContractTest {
     assertFalse(
         compiles(
             "import io.github.maxsumrall.jev4j.*; class T { void f(JevEvaluator e, Jev.State s) { e.evaluate(s, Jev.noul(\"x\"), Jev.score(\"s\").level(\"a\").level(\"b\").build()).map((Jev.ScoreAnswer a, Jev.NoulAnswer b) -> a.value()); } }"));
+  }
+
+  @Test
+  void asyncRejectsWrongEnumAndTupleTypesForBothStateForms() {
+    for (String inputType : List.of("String", "Jev.State")) {
+      String prefix =
+          "import io.github.maxsumrall.jev4j.*; import java.util.concurrent.CompletableFuture; class T { enum A { X } enum B { X } void f(JevEvaluator e, "
+              + inputType
+              + " s) {";
+      assertFalse(
+          compiles(
+              prefix
+                  + "CompletableFuture<Jev.ChoiceAnswer<B>> r = e.evaluateAsync(s, Jev.choice(A.class, \"x\")); } }"));
+      assertFalse(
+          compiles(
+              prefix
+                  + "CompletableFuture<JevEvaluator.Evaluation<Jev.EnumScoreAnswer<B>>> r = e.evaluateWithMetadataAsync(s, Jev.score(A.class, \"x\")); } }"));
+      assertFalse(
+          compiles(
+              prefix
+                  + "CompletableFuture<JevEvaluator.Evaluation2<Jev.ScoreAnswer,Jev.NoulAnswer>> r = e.evaluateAsync(s, Jev.noul(\"x\"), Jev.score(\"y\").level(\"a\").level(\"b\").build()); } }"));
+      assertFalse(
+          compiles(
+              prefix
+                  + "e.evaluateAsync(s, Jev.noul(\"x\"), Jev.choice(A.class, \"y\")).thenApply(r -> r.map((Jev.ChoiceAnswer<A> a, Jev.NoulAnswer b) -> b.isTrue())); } }"));
+    }
   }
 
   @Test
@@ -184,7 +237,8 @@ final class PublicTypeContractTest {
             "--release",
             "17",
             "-classpath",
-            System.getProperty("java.class.path"),
+            // Compile against the installed public API alone, without Jackson on the classpath.
+            Jev.class.getProtectionDomain().getCodeSource().getLocation().getPath(),
             "-d",
             output.toString());
     return compiler.getTask(null, null, diagnostic -> {}, options, null, List.of(unit)).call();
