@@ -46,6 +46,23 @@ def generated() -> str:
         result.model(), result.usage(), result.id(), result.provider(), result.requestId());
   }}
 
+  /** Evaluates {n} questions in one asynchronous request; cancel the original returned future. */
+  public <{types}> CompletableFuture<Evaluation{n}<{types}>> evaluateAsync(
+      String state,
+      {parameters}) {{
+    return evaluateAsync(Jev.State.from(state), {questions});
+  }}
+
+  /** Evaluates {n} questions in one asynchronous request; cancel the original returned future. */
+  public <{types}> CompletableFuture<Evaluation{n}<{types}>> evaluateAsync(
+      Jev.State state,
+      {parameters}) {{
+{preparations}
+    return exchangeAsync(List.of({prepared_list}), state, "question1",
+        result -> new Evaluation{n}<>({answers},
+            result.model(), result.usage(), result.id(), result.provider(), result.requestId()));
+  }}
+
   @FunctionalInterface
   public interface Function{n}<{types}, R> {{
     R apply({function_parameters});
