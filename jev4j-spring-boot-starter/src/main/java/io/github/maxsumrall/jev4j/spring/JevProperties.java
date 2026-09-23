@@ -1,9 +1,10 @@
 package io.github.maxsumrall.jev4j.spring;
 
-import java.net.URI;
-import java.time.Duration;
 import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.net.URI;
+import java.time.Duration;
 
 /**
  * Configuration for the auto-configured Jev evaluator.
@@ -16,40 +17,40 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties("jev")
 public record JevProperties(
-    @Nullable String apiKey,
-    Provider provider,
-    @Nullable URI baseUri,
-    String model,
-    Duration timeout) {
-  public JevProperties(
-      @Nullable String apiKey,
-      Provider provider,
-      @Nullable URI baseUri,
-      String model,
-      Duration timeout) {
-    this.apiKey = apiKey;
-    this.provider = provider == null ? Provider.TYPESAFE : provider;
-    this.baseUri = baseUri;
-    this.model = model == null ? "jev-latest" : model;
-    this.timeout = timeout == null ? Duration.ofSeconds(30) : timeout;
-  }
+        @Nullable String apiKey,
+        Provider provider,
+        @Nullable URI baseUri,
+        String model,
+        Duration timeout) {
+    public JevProperties(
+            @Nullable String apiKey,
+            Provider provider,
+            @Nullable URI baseUri,
+            String model,
+            Duration timeout) {
+        this.apiKey = apiKey;
+        this.provider = provider == null ? Provider.TYPESAFE : provider;
+        this.baseUri = baseUri;
+        this.model = model == null ? "jev-latest" : model;
+        this.timeout = timeout == null ? Duration.ofSeconds(30) : timeout;
+    }
 
-  @Override
-  public String toString() {
-    return "JevProperties[apiKey=<redacted>, provider="
-        + provider
-        + ", baseUri="
-        + baseUri
-        + ", model="
-        + model
-        + ", timeout="
-        + timeout
-        + "]";
-  }
+    @Override
+    public String toString() {
+        return "JevProperties[apiKey=<redacted>, provider="
+                + provider
+                + ", baseUri="
+                + baseUri
+                + ", model="
+                + model
+                + ", timeout="
+                + timeout
+                + "]";
+    }
 
-  /** Supported provider presets. */
-  public enum Provider {
-    TYPESAFE,
-    OPENROUTER
-  }
+    /** Supported provider presets. */
+    public enum Provider {
+        TYPESAFE,
+        OPENROUTER
+    }
 }

@@ -3,8 +3,8 @@
 
 from pathlib import Path
 
-START = "  // BEGIN GENERATED MULTI-QUESTION API\n"
-END = "  // END GENERATED MULTI-QUESTION API\n"
+START = "    // BEGIN GENERATED MULTI-QUESTION API\n"
+END = "    // END GENERATED MULTI-QUESTION API\n"
 path = Path(__file__).parent / "src/main/java/io/github/maxsumrall/jev4j/JevEvaluator.java"
 
 
@@ -106,6 +106,6 @@ if START in source:
     _, after = remainder.split(END, 1)
     source = before + replacement + after
 else:
-    anchor = "  private interface AnswerDecoder<T> {\n"
+    anchor = "    private interface AnswerDecoder<T> {\n"
     source = source.replace(anchor, replacement + "\n" + anchor)
 path.write_text(source)

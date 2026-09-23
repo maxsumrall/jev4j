@@ -10,12 +10,12 @@ import org.springframework.context.annotation.Import;
 @EnableAutoConfiguration
 @Import({OfflineAnswerConfiguration.class, LiveAnswerConfiguration.class, TriageController.class})
 public class TriageApplication {
-  @Bean
-  TriageService triageService(TriageAnswerSource answerSource) {
-    return new TriageService(answerSource);
-  }
+    @Bean
+    TriageService triageService(TriageAnswerSource answerSource) {
+        return new TriageService(answerSource);
+    }
 
-  public static void main(String[] args) {
-    SpringApplication.run(TriageApplication.class, args);
-  }
+    public static void main(String[] args) {
+        SpringApplication.run(TriageApplication.class, args);
+    }
 }

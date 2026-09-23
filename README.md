@@ -13,7 +13,7 @@ a question in plain English. Use the answer in Java.
 <!-- java: body -->
 ```java
 if (jev.test("I want my money back!", Jev.noul("Is this a refund request?"))) {
-  System.out.println("Start the refund workflow");
+    System.out.println("Start the refund workflow");
 }
 ```
 
@@ -21,25 +21,38 @@ if (jev.test("I want my money back!", Jev.noul("Is this a refund request?"))) {
 
 <!-- java: body -->
 ```java
-enum Team { BILLING, DELIVERY, SUPPORT }
+enum Team {
+    BILLING,
+    DELIVERY,
+    SUPPORT
+}
 
-String inbox = switch (jev.evaluate(
-    "My parcel never arrived.", Jev.choice(Team.class, "Which team can help?")).value()) {
-  case BILLING -> "billing-support";
-  case DELIVERY -> "delivery-support";
-  case SUPPORT -> "general-support";
-};
+String inbox =
+        switch (jev.evaluate(
+                        "My parcel never arrived.",
+                        Jev.choice(Team.class, "Which team can help?"))
+                .value()) {
+            case BILLING -> "billing-support";
+            case DELIVERY -> "delivery-support";
+            case SUPPORT -> "general-support";
+        };
 ```
 
 **A score on your scale.**
 
 <!-- java: body -->
 ```java
-enum Mood { CALM, FRUSTRATED, FURIOUS }
+enum Mood {
+    CALM,
+    FRUSTRATED,
+    FURIOUS
+}
 
-double frustrationScore = jev.evaluate(
-    "This is the third failed delivery!",
-    Jev.score(Mood.class, "How frustrated is the customer?")).value();
+double frustrationScore =
+        jev.evaluate(
+                        "This is the third failed delivery!",
+                        Jev.score(Mood.class, "How frustrated is the customer?"))
+                .value();
 ```
 
 Get a fractional score from `0` (CALM) to `2` (FURIOUS).
@@ -79,10 +92,11 @@ Create an evaluator with your OpenRouter key and reuse it across requests:
 import io.github.maxsumrall.jev4j.Jev;
 import io.github.maxsumrall.jev4j.JevEvaluator;
 
-JevEvaluator jev = JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
-    .openRouter()
-    .model("jev-latest")
-    .build();
+JevEvaluator jev =
+        JevEvaluator.builder(System.getenv("OPENROUTER_API_KEY"))
+                .openRouter()
+                .model("jev-latest")
+                .build();
 ```
 
 For TypeSafe, use a TypeSafe key and `.typeSafe()` instead. Use a Jev model, not a chat model.
@@ -100,13 +114,15 @@ Use `test(...)` for a boolean or `evaluate(...)` to keep the probability:
 import io.github.maxsumrall.jev4j.Jev.NoulAnswer;
 import io.github.maxsumrall.jev4j.Jev.NoulQuestion;
 
-NoulQuestion refundRequested = Jev.noul("Is the customer asking for money back?")
-    .describe(true, "Requests a refund or reversal of a charge")
-    .threshold(0.8);
+NoulQuestion refundRequested =
+        Jev.noul("Is the customer asking for money back?")
+                .describe(true, "Requests a refund or reversal of a charge")
+                .threshold(0.8);
 
 NoulAnswer refund = jev.evaluate("Please refund the duplicate charge.", refundRequested);
-boolean requested = refund.isTrue();         // probability >= 0.8
-boolean clearRequest = refund.isTrueAt(0.95); // check a stricter cutoff without another call
+boolean requested = refund.isTrue(); // probability >= 0.8
+boolean clearRequest =
+        refund.isTrueAt(0.95); // check a stricter cutoff without another call
 ```
 
 A `false` result means the probability is below your yes threshold, not a confident no.
@@ -128,21 +144,24 @@ Use your enum as the allowed options. Add descriptions on the question or implem
 import io.github.maxsumrall.jev4j.Jev.ChoiceAnswer;
 import io.github.maxsumrall.jev4j.Jev.ChoiceQuestion;
 
-enum Department { BILLING, DELIVERY, OTHER }
+enum Department {
+    BILLING,
+    DELIVERY,
+    OTHER
+}
 ```
 
 <!-- java: body -->
 ```java
 ChoiceQuestion<Department> department =
-    Jev.choice(Department.class, "Which team should handle this message?")
-        .describe(Department.BILLING, "Charges, payments, and refunds")
-        .describe(Department.DELIVERY, "Late, missing, or damaged deliveries")
-        .minConfidence(0.85);
+        Jev.choice(Department.class, "Which team should handle this message?")
+                .describe(Department.BILLING, "Charges, payments, and refunds")
+                .describe(Department.DELIVERY, "Late, missing, or damaged deliveries")
+                .minConfidence(0.85);
 
-ChoiceAnswer<Department> classification = jev.evaluate("My groceries never arrived.", department);
-String route = classification.acceptedValue()
-    .map(Department::name)
-    .orElse("MANUAL_REVIEW");
+ChoiceAnswer<Department> classification =
+        jev.evaluate("My groceries never arrived.", department);
+String route = classification.acceptedValue().map(Department::name).orElse("MANUAL_REVIEW");
 ```
 
 Use `acceptedValue()` or `meetsThresholds()` before routing. `value()` keeps the selected enum
@@ -169,11 +188,12 @@ For a rubric without an enum:
 
 <!-- java: body -->
 ```java
-Jev.ScoreQuestion quality = Jev.score("How useful is this response?")
-    .level("Unhelpful")
-    .level("Partly useful")
-    .level("Useful and complete")
-    .build();
+Jev.ScoreQuestion quality =
+        Jev.score("How useful is this response?")
+                .level("Unhelpful")
+                .level("Partly useful")
+                .level("Useful and complete")
+                .build();
 ```
 
 Score supports 2–10 levels; Choice supports up to 255 options. Both require a complete probability
@@ -206,8 +226,9 @@ record RoutingDecision(NoulAnswer refund, ChoiceAnswer<Department> department) {
 
 <!-- java: body -->
 ```java
-RoutingDecision routing = jev.evaluate("Please refund this order.", refundRequested, department)
-    .map(RoutingDecision::new);
+RoutingDecision routing =
+        jev.evaluate("Please refund this order.", refundRequested, department)
+                .map(RoutingDecision::new);
 ```
 
 The evaluation exposes `answer1()` through `answerN()` in question order and one set of request
@@ -226,8 +247,8 @@ public record SupportTicket(String message, int failedPayments) {}
 <!-- java: body -->
 ```java
 Jev.State ticket = Jev.State.from(new SupportTicket("Please refund this order.", 2));
-RoutingDecision ticketDecision = jev.evaluate(ticket, refundRequested, department)
-    .map(RoutingDecision::new);
+RoutingDecision ticketDecision =
+        jev.evaluate(ticket, refundRequested, department).map(RoutingDecision::new);
 ```
 
 Reuse the snapshot across calls. Later changes to the source data cannot change it; avoid mutating
@@ -248,10 +269,10 @@ They accept text or State inputs. `evaluateAsync` also supports two through eigh
 ```java
 import java.util.concurrent.CompletableFuture;
 
-CompletableFuture<JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>>> operation =
-    jev.evaluateAsync(ticket, refundRequested, department);
+CompletableFuture<JevEvaluator.Evaluation2<NoulAnswer, ChoiceAnswer<Department>>>
+        operation = jev.evaluateAsync(ticket, refundRequested, department);
 CompletableFuture<RoutingDecision> asyncRouting =
-    operation.thenApply(result -> result.map(RoutingDecision::new));
+        operation.thenApply(result -> result.map(RoutingDecision::new));
 
 // Cancel the original operation if you no longer need it.
 operation.cancel(true);
@@ -284,7 +305,7 @@ to the configured URI. Plain HTTP is for local tests.
 <!-- java: body -->
 ```java
 JevEvaluator.Evaluation<NoulAnswer> evaluation =
-    jev.evaluateWithMetadata("Please refund this order.", refundRequested);
+        jev.evaluateWithMetadata("Please refund this order.", refundRequested);
 NoulAnswer result = evaluation.answer();
 long inputTokens = evaluation.usage().inputTokens();
 ```
@@ -339,6 +360,9 @@ Run the offline build from the repository root with JDK 17:
 ./mvnw -f examples/plain-java/pom.xml verify exec:java
 ./mvnw -f examples/spring-boot-triage/pom.xml verify
 ```
+
+Java uses Google Java Format's AOSP style. `verify` checks formatting.
+Run `./mvnw fmt:format` to format the libraries; add `-f path/to/pom.xml` for a standalone project.
 
 [CI](.github/workflows/ci.yml) checks formatting, static analysis, public API contracts, and example
 endpoints, including Java 21/25 compatibility. `ReadmeCompileTest` compiles the Java fences in this
