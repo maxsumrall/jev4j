@@ -1,46 +1,86 @@
 # jev4j
 
-A Java client for [Jev](https://docs.typesafe.ai/introduction), TypeSafe's structured decision model.
-Evaluate text or structured state as a yes/no probability, an enum choice, or a score against ordered levels.
-
 [![CI](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/ci.yml)
 [![OpenRouter component tests](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml/badge.svg)](https://github.com/maxsumrall/jev4j/actions/workflows/openrouter-component.yml)
+
+**Use AI decisions in ordinary Java code.**
+
+Ask a question in plain English, then use the answer in an `if`, an enum `switch`, or your own
+record. With jev4j, you can route support requests, check intent, and rate content using
+[Jev](https://docs.typesafe.ai/introduction), TypeSafe's structured decision model.
+You define the possible answers and decide how much certainty you need before acting.
 
 <!-- java: members -->
 ```java
 import io.github.maxsumrall.jev4j.Jev;
-import io.github.maxsumrall.jev4j.Jev.NoulQuestion;
 import io.github.maxsumrall.jev4j.JevEvaluator;
 
 String supportQueue(JevEvaluator jev, String request) {
-  NoulQuestion isUrgent = Jev.noul("Is this urgent?");
-  if (jev.test(request, isUrgent)) {
+  if (jev.test(request, Jev.noul("Does this customer need urgent help?").threshold(0.9))) {
     return "priority-support";
-  } else {
-    return "normal-support";
   }
+  return "normal-support";
 }
 ```
 
-`request` is the input text; `jev` is a configured `JevEvaluator`, created below.
-`test(...)` makes one model request and
-returns `true` when the probability of yes is at least `0.5`. Override the cutoff with
-`.threshold(0.9)`.
+This makes one model request and takes the priority branch when Jev reports a yes probability
+of at least `0.9`. You choose the cutoff in code. Use `evaluate(...)` to keep the probability
+and reserve uncertain cases for review. [Create an evaluator below.](#get-started)
 
-- Immutable questions, answers, and evaluator builders.
-- Typed enum results for exhaustive Java `switch` expressions.
-- Local probability and confidence thresholds, with the original answers preserved.
-- TypeSafe and OpenRouter through the JDK HTTP client; Jackson 3 stays internal.
-- Optional Spring Boot 4 starter. No Spring dependency in core.
+Choose the kind of decision your application needs:
 
-**Early development.** Requires Java 17; the API may change. Version `0.1.0` is
-available from Maven Central.
+| You want to… | Use | Work with |
+| --- | --- | --- |
+| Check intent or gate an action | **Noul** | A yes/no probability and your boolean threshold |
+| Classify a message or choose a route | **Choice** | Your enum, with probabilities for each option |
+| Rate quality, severity, or sentiment | **Score** | A fractional score against your ordered levels |
 
-Development builds use `0.0.0-SNAPSHOT`. New releases use CalVer `YYYY.M.N`,
-which indicates release order rather than API compatibility. See the
-[release guide](docs/releasing.md) for the manual CI release flow.
+## Ask several questions in one request
+
+Combine up to eight questions about the same input and map their typed answers into your own
+record. Keep the probabilities alongside the decisions:
+
+<!-- java: members -->
+```java
+import io.github.maxsumrall.jev4j.Jev.NoulAnswer;
+import io.github.maxsumrall.jev4j.Jev.ChoiceAnswer;
+
+enum Topic { BILLING, DELIVERY, OTHER }
+
+record TicketAssessment(NoulAnswer refund, ChoiceAnswer<Topic> topic) {}
+
+TicketAssessment assess(JevEvaluator jev, String message) {
+  return jev.evaluate(
+      message,
+      Jev.noul("Is the customer asking for money back?").threshold(0.8),
+      Jev.choice(Topic.class, "Which team should handle this message?").minConfidence(0.85))
+      .map(TicketAssessment::new);
+}
+```
+
+On the returned `TicketAssessment`, call `refund().isTrue()` for the refund decision and
+`topic().acceptedValue()` for an `Optional<Topic>` that is empty below your confidence threshold.
+You still have the original answers to inspect. The compiler checks the answer types through
+evaluation and record construction; you write no response-parsing code.
+
+- **Keep decision policy in your application.** Apply thresholds without another model call.
+  Inspect probabilities and send uncertain results for review; confidence is not a correctness guarantee.
+- **Use the data you have.** Pass text or take an immutable `Jev.State` snapshot of a Java record,
+  map, list, or array.
+- **Fit your existing Java stack.** Use blocking calls or `CompletableFuture`s over the JDK HTTP
+  client, with TypeSafe or OpenRouter. Add the Spring Boot 4 starter for auto-configuration;
+  core has no Spring dependency.
+- **Test decisions offline.** Construct typed answers with `question.answer(...)` and exercise
+  your routing logic without credentials or model calls.
+
+**Java 17+ · MIT license · Available from Maven Central**
+
+[Get started](#get-started) · [API guide](#api-guide) · [Spring Boot](#spring-boot) ·
+[Runnable examples](#runnable-copyable-examples)
 
 ## Get started
+
+**Early development.** Version `0.1.0` is available from Maven Central; the API may change.
 
 Add the core library to your application. No custom Maven repository is needed:
 
@@ -87,7 +127,9 @@ They are fragments, not separate programs. Each `evaluate(...)` call makes one p
 and may incur charges. To call TypeSafe instead, use a TypeSafe key and `.typeSafe()` (the default
 provider).
 
-## Noul: a probability of yes
+## API guide
+
+### Noul: a probability of yes
 
 Jev calls its yes/no primitive **Noul**. A value near 1 means yes; near 0 means no.
 
@@ -110,7 +152,7 @@ double p = answer.probabilityTrue();
 String decision = p >= 0.9 ? "YES" : p <= 0.1 ? "NO" : "REVIEW";
 ```
 
-## Choice: route with an enum switch
+### Choice: route with an enum switch
 
 Define the allowed options with an enum. Implement `Jev.Described` to keep descriptions with
 the constants:
@@ -192,7 +234,7 @@ ChoiceQuestion<PlainDepartment> plainDepartment =
 All constants remain allowed, including those without a description. `.describe(...)` changes
 only the description. Wire labels use `Enum.name()`, not `toString()`.
 
-## Score: rate against ordered levels
+### Score: rate against ordered levels
 
 Implement `Jev.ScoreLevel` to describe each level. Declare constants from lowest to highest;
 their positions define scores starting at zero. Reordering the enum changes the rubric.
@@ -280,7 +322,7 @@ ScoreQuestion quality = Jev.score("How useful is this response?")
 
 Score rubrics require 2–10 levels. Choice supports up to 255 enum constants.
 
-## Thresholds are application policy
+### Thresholds are application policy
 
 | Type | Configuration | Meaning |
 | --- | --- | --- |
@@ -297,7 +339,7 @@ Thresholds never enter the provider request. Fluent methods return new immutable
 keep their return values. Low confidence never becomes `OTHER`, and transport failures never
 become `false` or an empty accepted result.
 
-## HTTP configuration and metadata
+### HTTP configuration and metadata
 
 Reuse an evaluator across requests. Configure its model, base URI, or timeout, or supply your
 application's JDK `HttpClient` for proxy and TLS settings:
@@ -344,6 +386,8 @@ sensitive data. Request IDs stay in their accessor, outside error messages; trea
 data before logging. API keys must use bearer-token-safe characters and
 are neither trimmed nor included in validation errors or their cause chains.
 
+### Multi-question results
+
 Evaluation accepts one question or two through eight typed questions with the
 same String or `Jev.State` input. A multi-question evaluation uses one request and carries one set of metadata:
 
@@ -364,7 +408,7 @@ usage, ID, and provider metadata. Mapping runs locally and preserves the answer 
 acceptance helpers before acting on uncertain results. Streaming, automatic retries, and more than
 eight questions per request are not supported.
 
-## Structured state
+### Structured state
 
 Create a `Jev.State` from a public Java record, a string-keyed map, a list, or an array. The
 factory converts the input to JSON before returning and keeps a detached, immutable snapshot.
@@ -413,7 +457,7 @@ Existing String method signatures remain available. A bare null literal such as
 `test(null, question)` is now ambiguous between String and State overloads; a typed null still
 compiles and fails at runtime. Question instructions and descriptions remain strings.
 
-## Asynchronous evaluation
+### Asynchronous evaluation
 
 Use `evaluateAsync`, `evaluateWithMetadataAsync`, or `testAsync` for native JDK HTTP async I/O.
 They accept either literal String text or an immutable `Jev.State`, preserve the same answer and
@@ -564,6 +608,11 @@ To opt in locally, set `OPENROUTER_API_KEY` in your environment, then run:
 
 This incurs provider charges. Missing credentials fail the explicit live run. The Spring example's
 `LiveProfileIntegrationTest` uses a **local mock provider**, not OpenRouter.
+
+### Releases
+
+Development builds use `0.0.0-SNAPSHOT`. New releases use CalVer `YYYY.M.N`,
+which indicates release order rather than API compatibility.
 
 Publishing remains separate from CI. The manual [Maven Central release workflow](.github/workflows/release.yml)
 tests a release tag, signs the library artifacts, and publishes through Sonatype Central.
